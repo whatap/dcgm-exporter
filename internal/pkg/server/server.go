@@ -163,8 +163,8 @@ func (s *MetricsServer) render(w io.Writer, metricGroups registry.MetricsByCount
 	for group, metrics := range metricGroups {
 		deviceWatchList, exists := s.deviceWatchListManager.EntityWatchList(group)
 		if exists {
-			for _, transformation := range s.transformations {
-				err := transformation.Process(metrics, deviceWatchList.DeviceInfo())
+			for _, transform := range s.transformations {
+				err := transform.Process(metrics, deviceWatchList.DeviceInfo())
 				if err != nil {
 					slog.LogAttrs(context.Background(), slog.LevelError, "Failed to apply transformations on metrics",
 						slog.String(logging.ErrorKey, err.Error()),
