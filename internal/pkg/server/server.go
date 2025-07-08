@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -34,6 +35,7 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/debug"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/registry"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/rendermetrics"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/transformation"
@@ -82,6 +84,7 @@ func NewMetricsServer(
 			<body>
 			<h1>GPU Exporter</h1>
 			<p><a href="./metrics">Metrics</a></p>
+			<p><a href="./metrics/process">Process Metrics</a></p>
 			</body>
 			</html>`))
 		if err != nil {
@@ -93,6 +96,7 @@ func NewMetricsServer(
 
 	router.HandleFunc("/health", serverv1.Health)
 	router.HandleFunc("/metrics", serverv1.Metrics)
+	router.HandleFunc("/metrics/process", serverv1.ProcessMetrics)
 
 	return serverv1, func() {}, nil
 }
@@ -188,7 +192,6 @@ func (s *MetricsServer) render(w io.Writer, metricGroups registry.MetricsByCount
 	for group, metrics := range metricGroups {
 		deviceWatchList, exists := s.deviceWatchListManager.EntityWatchList(group)
 		if exists {
-
 			// Write debug files and log references
 			var metricsFile, deviceInfoFile string
 			var err error
@@ -250,6 +253,37 @@ func (s *MetricsServer) render(w io.Writer, metricGroups registry.MetricsByCount
 		}
 	}
 	return nil
+}
+
+func (s *MetricsServer) ProcessMetrics(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+
+	// Get GPU process information from NVML provider
+	processes, err := nvmlprovider.Client().GetAllGPUProcessInfo()
+	if err != nil {
+		slog.Error("Failed to gather GPU process info", slog.String(logging.ErrorKey, err.Error()))
+		http.Error(w, internalServerError, http.StatusInternalServerError)
+		return
+	}
+
+	var buf bytes.Buffer
+
+	// Write Prometheus metrics format
+	buf.WriteString("# HELP DCGM_GPU_PROCESS_UTIL GPU process utilization\n")
+	buf.WriteString("# TYPE DCGM_GPU_PROCESS_UTIL gauge\n")
+
+	for _, proc := range processes {
+		buf.WriteString(fmt.Sprintf("DCGM_GPU_PROCESS_UTIL{device=\"%d\",pid=\"%d\",command=\"%s\",type=\"%s\"} %d\n",
+			proc.Device, proc.PID, proc.Command, proc.Type, proc.Utilization))
+	}
+
+	_, err = w.Write(buf.Bytes())
+	if err != nil {
+		slog.Error("Failed to write response.", slog.String(logging.ErrorKey, err.Error()))
+		http.Error(w, "failed to write response", http.StatusInternalServerError)
+		return
+	}
 }
 
 func (s *MetricsServer) Health(w http.ResponseWriter, _ *http.Request) {

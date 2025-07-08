@@ -20,5 +20,15 @@ package nvmlprovider
 
 type NVML interface {
 	GetMIGDeviceInfoByID(string) (*MIGDeviceInfo, error)
+	GetAllGPUProcessInfo() ([]GPUProcessInfo, error)
 	Cleanup()
+}
+
+type GPUProcessInfo struct {
+	Device      int    `json:"device"`
+	PID         uint32 `json:"pid"`
+	Command     string `json:"command"`
+	Type        string `json:"type"`
+	MemoryMB    uint64 `json:"memory_mb"`
+	Utilization uint64 `json:"utilization"`
 }
