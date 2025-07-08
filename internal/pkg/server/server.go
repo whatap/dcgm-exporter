@@ -270,12 +270,12 @@ func (s *MetricsServer) ProcessMetrics(w http.ResponseWriter, _ *http.Request) {
 	var buf bytes.Buffer
 
 	// Write Prometheus metrics format
-	buf.WriteString("# HELP DCGM_GPU_PROCESS_UTIL GPU process utilization\n")
-	buf.WriteString("# TYPE DCGM_GPU_PROCESS_UTIL gauge\n")
+	buf.WriteString("# HELP DCGM_GPU_PROCESS_MEMORY_MB GPU process memory usage in MB\n")
+	buf.WriteString("# TYPE DCGM_GPU_PROCESS_MEMORY_MB gauge\n")
 
 	for _, proc := range processes {
-		buf.WriteString(fmt.Sprintf("DCGM_GPU_PROCESS_UTIL{device=\"%d\",pid=\"%d\",command=\"%s\",type=\"%s\"} %d\n",
-			proc.Device, proc.PID, proc.Command, proc.Type, proc.Utilization))
+		buf.WriteString(fmt.Sprintf("DCGM_GPU_PROCESS_MEMORY_MB{device=\"%d\",pid=\"%d\",command=\"%s\",type=\"%s\"} %d\n",
+			proc.Device, proc.PID, proc.Command, proc.Type, proc.MemoryMB))
 	}
 
 	_, err = w.Write(buf.Bytes())
