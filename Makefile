@@ -57,6 +57,9 @@ else
 	$(MAKE) PLATFORMS=linux/amd64 OUTPUT=type=docker DOCKERCMD='docker build'
 endif
 
+local-latest:
+	$(MAKE) local REGISTRY=whatap VERSION=latest DCGM_VERSION="" IMAGE_TAG=""
+
 ubi%: DOCKERFILE = docker/Dockerfile.ubi
 ubi%: --docker-build-%
 	@
