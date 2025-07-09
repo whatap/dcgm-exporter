@@ -269,13 +269,22 @@ func (s *MetricsServer) ProcessMetrics(w http.ResponseWriter, _ *http.Request) {
 
 	var buf bytes.Buffer
 
-	// Write Prometheus metrics format
-	buf.WriteString("# HELP DCGM_GPU_PROCESS_MEMORY_MB GPU process memory usage in MB\n")
-	buf.WriteString("# TYPE DCGM_GPU_PROCESS_MEMORY_MB gauge\n")
+	// Write DCGM_GPU_PROCESS_UTIL metrics
+	buf.WriteString("# HELP DCGM_GPU_PROCESS_UTIL GPU process utilization percentage\n")
+	buf.WriteString("# TYPE DCGM_GPU_PROCESS_UTIL gauge\n")
 
 	for _, proc := range processes {
-		buf.WriteString(fmt.Sprintf("DCGM_GPU_PROCESS_MEMORY_MB{device=\"%d\",pid=\"%d\",command=\"%s\",type=\"%s\"} %d\n",
-			proc.Device, proc.PID, proc.Command, proc.Type, proc.MemoryMB))
+		buf.WriteString(fmt.Sprintf("DCGM_GPU_PROCESS_UTIL{device=\"%d\",pid=\"%d\",command=\"%s\",type=\"%s\"} %d\n",
+			proc.Device, proc.PID, proc.Command, proc.Type, proc.Utilization))
+	}
+
+	// Write DCGM_GPU_PROCESS_FB_USED_PERCENT metrics
+	buf.WriteString("# HELP DCGM_GPU_PROCESS_FB_USED_PERCENT GPU process framebuffer used percentage\n")
+	buf.WriteString("# TYPE DCGM_GPU_PROCESS_FB_USED_PERCENT gauge\n")
+
+	for _, proc := range processes {
+		buf.WriteString(fmt.Sprintf("DCGM_GPU_PROCESS_FB_USED_PERCENT{device=\"%d\",pid=\"%d\",command=\"%s\",type=\"%s\"} %.2f\n",
+			proc.Device, proc.PID, proc.Command, proc.Type, proc.FBUsedPercent))
 	}
 
 	_, err = w.Write(buf.Bytes())

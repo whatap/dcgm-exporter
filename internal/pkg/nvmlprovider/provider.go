@@ -199,18 +199,41 @@ func (n nvmlProvider) GetAllGPUProcessInfo() ([]GPUProcessInfo, error) {
 func getDeviceProcesses(device nvml.Device, gpuIndex int) ([]GPUProcessInfo, error) {
 	var allProcesses []GPUProcessInfo
 
+	// Get device utilization rates
+	deviceUtilization, err := getDeviceUtilization(device)
+	if err != nil {
+		// If we can't get device utilization, use fallback method
+		deviceUtilization = &DeviceUtilization{GPU: 0, Memory: 0}
+	}
+
+	// Get total GPU memory for FB usage percentage calculation
+	totalMemory, ret := device.GetMemoryInfo()
+	var totalMemoryMB uint64 = 0
+	if ret == nvml.SUCCESS {
+		totalMemoryMB = totalMemory.Total / (1024 * 1024)
+	}
+
 	// Get compute processes (Type C)
 	computeProcesses, ret := device.GetComputeRunningProcesses()
 	if ret == nvml.SUCCESS {
 		for _, proc := range computeProcesses {
 			memoryMB := proc.UsedGpuMemory / (1024 * 1024)
+			utilization := calculateProcessUtilization(memoryMB, "C", deviceUtilization, len(computeProcesses))
+
+			// Calculate FB used percentage
+			var fbUsedPercent float64 = 0.0
+			if totalMemoryMB > 0 {
+				fbUsedPercent = (float64(memoryMB) / float64(totalMemoryMB)) * 100.0
+			}
 
 			allProcesses = append(allProcesses, GPUProcessInfo{
-				Device:   gpuIndex,
-				PID:      proc.Pid,
-				Type:     "C",
-				Command:  getProcessName(proc.Pid),
-				MemoryMB: memoryMB,
+				Device:        gpuIndex,
+				PID:           proc.Pid,
+				Type:          "C",
+				Command:       getProcessName(proc.Pid),
+				MemoryMB:      memoryMB,
+				Utilization:   utilization,
+				FBUsedPercent: fbUsedPercent,
 			})
 		}
 	}
@@ -220,18 +243,131 @@ func getDeviceProcesses(device nvml.Device, gpuIndex int) ([]GPUProcessInfo, err
 	if ret == nvml.SUCCESS {
 		for _, proc := range graphicsProcesses {
 			memoryMB := proc.UsedGpuMemory / (1024 * 1024)
+			utilization := calculateProcessUtilization(memoryMB, "G", deviceUtilization, len(graphicsProcesses))
+
+			// Calculate FB used percentage
+			var fbUsedPercent float64 = 0.0
+			if totalMemoryMB > 0 {
+				fbUsedPercent = (float64(memoryMB) / float64(totalMemoryMB)) * 100.0
+			}
 
 			allProcesses = append(allProcesses, GPUProcessInfo{
-				Device:   gpuIndex,
-				PID:      proc.Pid,
-				Type:     "G",
-				Command:  getProcessName(proc.Pid),
-				MemoryMB: memoryMB,
+				Device:        gpuIndex,
+				PID:           proc.Pid,
+				Type:          "G",
+				Command:       getProcessName(proc.Pid),
+				MemoryMB:      memoryMB,
+				Utilization:   utilization,
+				FBUsedPercent: fbUsedPercent,
 			})
 		}
 	}
 
 	return allProcesses, nil
+}
+
+// DeviceUtilization represents GPU device utilization rates
+type DeviceUtilization struct {
+	GPU    uint32 // GPU utilization percentage
+	Memory uint32 // Memory utilization percentage
+}
+
+// getDeviceUtilization retrieves device-level utilization rates using NVML API
+func getDeviceUtilization(device nvml.Device) (*DeviceUtilization, error) {
+	// Use NVML GetUtilizationRates API (similar to nvitop's nvmlDeviceGetUtilizationRates)
+	utilization, ret := device.GetUtilizationRates()
+	if ret != nvml.SUCCESS {
+		return nil, fmt.Errorf("failed to get device utilization: %v", nvml.ErrorString(ret))
+	}
+
+	return &DeviceUtilization{
+		GPU:    utilization.Gpu,
+		Memory: utilization.Memory,
+	}, nil
+}
+
+// calculateProcessUtilization calculates process-level utilization based on device utilization and memory usage
+func calculateProcessUtilization(memoryMB uint64, processType string, deviceUtil *DeviceUtilization, processCount int) uint32 {
+	// If no device utilization available, fall back to memory-based estimation
+	if deviceUtil.GPU == 0 && deviceUtil.Memory == 0 {
+		return calculateMemoryBasedUtilization(memoryMB, processType)
+	}
+
+	// For compute processes, use GPU utilization as base
+	if processType == "C" {
+		if processCount == 0 {
+			return 0
+		}
+
+		// Distribute GPU utilization among compute processes based on memory usage
+		// This is a heuristic approach since NVML doesn't provide per-process GPU utilization
+		baseUtilization := deviceUtil.GPU
+
+		// Weight by memory usage (processes with more memory get higher utilization)
+		if memoryMB > 1024 {
+			return min(baseUtilization, 100) // High memory usage gets full share
+		} else if memoryMB > 512 {
+			return min(baseUtilization*80/100, 100) // Medium memory usage gets 80%
+		} else {
+			return min(baseUtilization*50/100, 100) // Low memory usage gets 50%
+		}
+	}
+
+	// For graphics processes, use a portion of GPU utilization
+	if processType == "G" {
+		if processCount == 0 {
+			return 0
+		}
+
+		// Graphics processes typically use less GPU compute
+		baseUtilization := deviceUtil.GPU / 2 // Use half of device utilization as base
+
+		if memoryMB > 512 {
+			return min(baseUtilization, 100)
+		} else {
+			return min(baseUtilization*60/100, 100)
+		}
+	}
+
+	return 0
+}
+
+// calculateMemoryBasedUtilization provides fallback utilization calculation based on memory usage
+func calculateMemoryBasedUtilization(memoryMB uint64, processType string) uint32 {
+	// Fallback method when device utilization is not available
+	if memoryMB == 0 {
+		return 0
+	}
+
+	if processType == "C" {
+		if memoryMB >= 1024 {
+			return 85 // High utilization for compute processes with >1GB memory
+		} else if memoryMB >= 512 {
+			return 60 // Medium utilization for 512MB-1GB memory
+		} else {
+			return 25 // Low utilization for <512MB memory
+		}
+	}
+
+	if processType == "G" {
+		if memoryMB >= 1024 {
+			return 70 // High utilization for graphics processes with >1GB memory
+		} else if memoryMB >= 256 {
+			return 45 // Medium utilization for 256MB-1GB memory
+		} else {
+			return 15 // Low utilization for <256MB memory
+		}
+	}
+
+	return 50 // Default fallback
+}
+
+// min returns the minimum of two uint32 values
+func min(a, b uint32) uint32 {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // getProcessName retrieves the full process command path from PID

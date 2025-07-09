@@ -25,9 +25,11 @@ type NVML interface {
 }
 
 type GPUProcessInfo struct {
-	Device   int    `json:"device"`
-	PID      uint32 `json:"pid"`
-	Command  string `json:"command"`
-	Type     string `json:"type"`
-	MemoryMB uint64 `json:"memory_mb"`
+	Device        int     `json:"device"`
+	PID           uint32  `json:"pid"`
+	Command       string  `json:"command"`
+	Type          string  `json:"type"`
+	MemoryMB      uint64  `json:"memory_mb"`
+	Utilization   uint32  `json:"utilization"`
+	FBUsedPercent float64 `json:"fb_used_percent"`
 }
