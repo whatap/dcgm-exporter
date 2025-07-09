@@ -213,6 +213,34 @@ func getDeviceProcesses(device nvml.Device, gpuIndex int) ([]GPUProcessInfo, err
 		totalMemoryMB = totalMemory.Total / (1024 * 1024)
 	}
 
+	// Get device UUID
+	deviceUUID, ret := device.GetUUID()
+	var uuid string = "unknown"
+	if ret == nvml.SUCCESS {
+		uuid = deviceUUID
+	}
+
+	// Get MIG mode - for DCGM_FI_DEV_UUID and DCGM_FI_DEV_MIG_MODE
+	migMode, _, ret := device.GetMigMode()
+	var migModeValue uint32 = 0
+	var dcgmFiDevUUID string = uuid // Default to device UUID
+	if ret == nvml.SUCCESS {
+		if migMode == nvml.DEVICE_MIG_ENABLE {
+			migModeValue = 1
+			// For MIG devices, DCGM_FI_DEV_UUID might be different
+			// In MIG mode, we still use the device UUID as DCGM_FI_DEV_UUID
+			// Individual MIG instances would have their own UUIDs, but this is device-level
+			dcgmFiDevUUID = uuid
+		} else {
+			migModeValue = 0
+			dcgmFiDevUUID = uuid
+		}
+	} else {
+		// If we can't get MIG mode, assume non-MIG
+		migModeValue = 0
+		dcgmFiDevUUID = uuid
+	}
+
 	// Get compute processes (Type C)
 	computeProcesses, ret := device.GetComputeRunningProcesses()
 	if ret == nvml.SUCCESS {
@@ -227,13 +255,16 @@ func getDeviceProcesses(device nvml.Device, gpuIndex int) ([]GPUProcessInfo, err
 			}
 
 			allProcesses = append(allProcesses, GPUProcessInfo{
-				Device:        gpuIndex,
-				PID:           proc.Pid,
-				Type:          "C",
-				Command:       getProcessName(proc.Pid),
-				MemoryMB:      memoryMB,
-				Utilization:   utilization,
-				FBUsedPercent: fbUsedPercent,
+				Device:               gpuIndex,
+				PID:                  proc.Pid,
+				Type:                 "C",
+				Command:              getProcessName(proc.Pid),
+				MemoryMB:             memoryMB,
+				Utilization:          utilization,
+				FBUsedPercent:        fbUsedPercent,
+				UUID:                 uuid,
+				DCGM_FI_DEV_UUID:     dcgmFiDevUUID,
+				DCGM_FI_DEV_MIG_MODE: migModeValue,
 			})
 		}
 	}
@@ -252,13 +283,16 @@ func getDeviceProcesses(device nvml.Device, gpuIndex int) ([]GPUProcessInfo, err
 			}
 
 			allProcesses = append(allProcesses, GPUProcessInfo{
-				Device:        gpuIndex,
-				PID:           proc.Pid,
-				Type:          "G",
-				Command:       getProcessName(proc.Pid),
-				MemoryMB:      memoryMB,
-				Utilization:   utilization,
-				FBUsedPercent: fbUsedPercent,
+				Device:               gpuIndex,
+				PID:                  proc.Pid,
+				Type:                 "G",
+				Command:              getProcessName(proc.Pid),
+				MemoryMB:             memoryMB,
+				Utilization:          utilization,
+				FBUsedPercent:        fbUsedPercent,
+				UUID:                 uuid,
+				DCGM_FI_DEV_UUID:     dcgmFiDevUUID,
+				DCGM_FI_DEV_MIG_MODE: migModeValue,
 			})
 		}
 	}

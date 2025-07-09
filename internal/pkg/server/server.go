@@ -274,8 +274,8 @@ func (s *MetricsServer) ProcessMetrics(w http.ResponseWriter, _ *http.Request) {
 	buf.WriteString("# TYPE DCGM_GPU_PROCESS_UTIL gauge\n")
 
 	for _, proc := range processes {
-		buf.WriteString(fmt.Sprintf("DCGM_GPU_PROCESS_UTIL{device=\"%d\",pid=\"%d\",command=\"%s\",type=\"%s\"} %d\n",
-			proc.Device, proc.PID, proc.Command, proc.Type, proc.Utilization))
+		buf.WriteString(fmt.Sprintf("DCGM_GPU_PROCESS_UTIL{device=\"%d\",pid=\"%d\",command=\"%s\",type=\"%s\",uuid=\"%s\",dcgm_fi_dev_uuid=\"%s\",dcgm_fi_dev_mig_mode=\"%d\"} %d\n",
+			proc.Device, proc.PID, proc.Command, proc.Type, proc.UUID, proc.DCGM_FI_DEV_UUID, proc.DCGM_FI_DEV_MIG_MODE, proc.Utilization))
 	}
 
 	// Write DCGM_GPU_PROCESS_FB_USED_PERCENT metrics
@@ -283,8 +283,8 @@ func (s *MetricsServer) ProcessMetrics(w http.ResponseWriter, _ *http.Request) {
 	buf.WriteString("# TYPE DCGM_GPU_PROCESS_FB_USED_PERCENT gauge\n")
 
 	for _, proc := range processes {
-		buf.WriteString(fmt.Sprintf("DCGM_GPU_PROCESS_FB_USED_PERCENT{device=\"%d\",pid=\"%d\",command=\"%s\",type=\"%s\"} %.2f\n",
-			proc.Device, proc.PID, proc.Command, proc.Type, proc.FBUsedPercent))
+		buf.WriteString(fmt.Sprintf("DCGM_GPU_PROCESS_FB_USED_PERCENT{device=\"%d\",pid=\"%d\",command=\"%s\",type=\"%s\",uuid=\"%s\",dcgm_fi_dev_uuid=\"%s\",dcgm_fi_dev_mig_mode=\"%d\"} %.2f\n",
+			proc.Device, proc.PID, proc.Command, proc.Type, proc.UUID, proc.DCGM_FI_DEV_UUID, proc.DCGM_FI_DEV_MIG_MODE, proc.FBUsedPercent))
 	}
 
 	_, err = w.Write(buf.Bytes())
