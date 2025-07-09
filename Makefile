@@ -58,7 +58,7 @@ else
 endif
 
 local-latest:
-	$(MAKE) local REGISTRY=whatap VERSION=latest DCGM_VERSION="" IMAGE_TAG=""
+	$(MAKE) local REGISTRY=whatap VERSION=latest IMAGE_TAG=""
 
 ubi%: DOCKERFILE = docker/Dockerfile.ubi
 ubi%: --docker-build-%
