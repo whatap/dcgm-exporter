@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -507,7 +506,7 @@ func (c *DCGMCollector) extractComputeSlices(migProfile string) int {
 func (c *DCGMCollector) createWeightedGPUUtilMetric(metrics MetricsByCounter, sampleMetric Metric, value float64, calculationMethod string) {
 	// Create counter for weighted GPU util
 	weightedCounter := counters.Counter{
-		FieldID:   counters.DCGMWeightedGPUUtil,
+		FieldID:   dcgm.Short(counters.DCGMWeightedGPUUtil),
 		FieldName: "DCGM_FI_DEV_WEIGHTED_GPU_UTIL",
 		PromType:  "gauge",
 		Help:      "Weighted GPU utilization for MIG and non-MIG devices",
