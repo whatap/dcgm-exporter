@@ -25,6 +25,7 @@ const (
 	DCGMXIDErrorsCount   ExporterCounter = iota + 9000
 	DCGMClockEventsCount ExporterCounter = iota + 9000
 	DCGMGPUHealthStatus  ExporterCounter = iota + 9000
+	DCGMWeightedGPUUtil  ExporterCounter = iota + 9000
 )
 
 // String method to convert the enum value to a string
@@ -36,6 +37,8 @@ func (enm ExporterCounter) String() string {
 		return DCGMExpClockEventsCount
 	case DCGMGPUHealthStatus:
 		return DCGMExpGPUHealthStatus
+	case DCGMWeightedGPUUtil:
+		return DCGMExpWeightedGPUUtil
 	default:
 		return "DCGM_FI_UNKNOWN"
 	}
@@ -46,6 +49,7 @@ var DCGMFields = map[string]ExporterCounter{
 	DCGMXIDErrorsCount.String():   DCGMXIDErrorsCount,
 	DCGMClockEventsCount.String(): DCGMClockEventsCount,
 	DCGMGPUHealthStatus.String():  DCGMGPUHealthStatus,
+	DCGMWeightedGPUUtil.String():  DCGMWeightedGPUUtil,
 	DCGMFIUnknown.String():        DCGMFIUnknown,
 }
 
