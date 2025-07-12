@@ -245,6 +245,11 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 
 			podInfo, exists := deviceToPod[deviceID]
 			if exists {
+				// Initialize Attributes map if it's nil to prevent panic
+				if metrics[counter][j].Attributes == nil {
+					metrics[counter][j].Attributes = make(map[string]string)
+				}
+
 				if !p.Config.UseOldNamespace {
 					metrics[counter][j].Attributes[podAttribute] = podInfo.Name
 					metrics[counter][j].Attributes[namespaceAttribute] = podInfo.Namespace
@@ -253,6 +258,11 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 					metrics[counter][j].Attributes[oldPodAttribute] = podInfo.Name
 					metrics[counter][j].Attributes[oldNamespaceAttribute] = podInfo.Namespace
 					metrics[counter][j].Attributes[oldContainerAttribute] = podInfo.Container
+				}
+
+				// Initialize Labels map if it's nil to prevent panic
+				if metrics[counter][j].Labels == nil {
+					metrics[counter][j].Labels = make(map[string]string)
 				}
 
 				maps.Copy(metrics[counter][j].Labels, podInfo.Labels)
