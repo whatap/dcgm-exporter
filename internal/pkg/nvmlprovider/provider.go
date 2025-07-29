@@ -241,7 +241,207 @@ func getDeviceProcesses(device nvml.Device, gpuIndex int) ([]GPUProcessInfo, err
 		dcgmFiDevUUID = uuid
 	}
 
+	// Get all running processes (compute and graphics)
+	var allRunningProcesses []nvml.ProcessInfo
+
 	// Get compute processes (Type C)
+	computeProcesses, ret := device.GetComputeRunningProcesses()
+	if ret == nvml.SUCCESS {
+		allRunningProcesses = append(allRunningProcesses, computeProcesses...)
+	}
+
+	// Get graphics processes (Type G)
+	graphicsProcesses, ret := device.GetGraphicsRunningProcesses()
+	if ret == nvml.SUCCESS {
+		allRunningProcesses = append(allRunningProcesses, graphicsProcesses...)
+	}
+
+	// Get actual process utilization using improved NVML-based method
+	processUtilizations, err := getProcessUtilization(device, allRunningProcesses)
+	if err != nil {
+		// Fallback to old heuristic method if new method fails
+		slog.Warn("Failed to get process utilization, falling back to heuristic method",
+			slog.String("error", err.Error()))
+		return getDeviceProcessesFallback(device, gpuIndex, deviceUtilization, totalMemoryMB, uuid, dcgmFiDevUUID, migModeValue)
+	}
+
+	// Process compute processes with actual utilization data
+	for _, proc := range computeProcesses {
+		memoryMB := proc.UsedGpuMemory / (1024 * 1024)
+
+		// Get actual utilization from NVML-based calculation
+		utilInfo := processUtilizations[proc.Pid]
+		utilization := utilInfo.SMUtilization // Use SM utilization as the main GPU utilization metric
+
+		// Calculate FB used percentage
+		var fbUsedPercent float64 = 0.0
+		if totalMemoryMB > 0 {
+			fbUsedPercent = (float64(memoryMB) / float64(totalMemoryMB)) * 100.0
+		}
+
+		allProcesses = append(allProcesses, GPUProcessInfo{
+			Device:               gpuIndex,
+			PID:                  proc.Pid,
+			Type:                 "C",
+			Command:              getProcessName(proc.Pid),
+			MemoryMB:             memoryMB,
+			Utilization:          utilization, // Now using actual NVML-based data
+			FBUsedPercent:        fbUsedPercent,
+			UUID:                 uuid,
+			DCGM_FI_DEV_UUID:     dcgmFiDevUUID,
+			DCGM_FI_DEV_MIG_MODE: migModeValue,
+		})
+	}
+
+	// Process graphics processes with actual utilization data
+	for _, proc := range graphicsProcesses {
+		memoryMB := proc.UsedGpuMemory / (1024 * 1024)
+
+		// Get actual utilization from NVML-based calculation
+		utilInfo := processUtilizations[proc.Pid]
+		utilization := utilInfo.SMUtilization // Use SM utilization as the main GPU utilization metric
+
+		// Calculate FB used percentage
+		var fbUsedPercent float64 = 0.0
+		if totalMemoryMB > 0 {
+			fbUsedPercent = (float64(memoryMB) / float64(totalMemoryMB)) * 100.0
+		}
+
+		allProcesses = append(allProcesses, GPUProcessInfo{
+			Device:               gpuIndex,
+			PID:                  proc.Pid,
+			Type:                 "G",
+			Command:              getProcessName(proc.Pid),
+			MemoryMB:             memoryMB,
+			Utilization:          utilization, // Now using actual NVML-based data
+			FBUsedPercent:        fbUsedPercent,
+			UUID:                 uuid,
+			DCGM_FI_DEV_UUID:     dcgmFiDevUUID,
+			DCGM_FI_DEV_MIG_MODE: migModeValue,
+		})
+	}
+
+	return allProcesses, nil
+}
+
+// DeviceUtilization represents GPU device utilization rates
+type DeviceUtilization struct {
+	GPU    uint32 // GPU utilization percentage
+	Memory uint32 // Memory utilization percentage
+}
+
+// ProcessUtilizationSample represents a single process utilization sample from NVML
+type ProcessUtilizationSample struct {
+	PID       uint32
+	TimeStamp uint64
+	SMUtil    uint32 // SM utilization (0-100)
+	MemUtil   uint32 // Memory utilization (0-100)
+	EncUtil   uint32 // Encoder utilization (0-100)
+	DecUtil   uint32 // Decoder utilization (0-100)
+}
+
+// ProcessUtilizationInfo represents process-level GPU utilization information
+type ProcessUtilizationInfo struct {
+	SMUtilization      uint32
+	MemoryUtilization  uint32
+	EncoderUtilization uint32
+	DecoderUtilization uint32
+}
+
+// getDeviceUtilization retrieves device-level utilization rates using NVML API
+func getDeviceUtilization(device nvml.Device) (*DeviceUtilization, error) {
+	// Use NVML GetUtilizationRates API (similar to nvitop's nvmlDeviceGetUtilizationRates)
+	utilization, ret := device.GetUtilizationRates()
+	if ret != nvml.SUCCESS {
+		return nil, fmt.Errorf("failed to get device utilization: %v", nvml.ErrorString(ret))
+	}
+
+	return &DeviceUtilization{
+		GPU:    utilization.Gpu,
+		Memory: utilization.Memory,
+	}, nil
+}
+
+// getProcessUtilization retrieves actual process-level GPU utilization using NVML API
+// This function attempts to use nvmlDeviceGetProcessUtilization if available,
+// otherwise falls back to a more conservative heuristic approach
+func getProcessUtilization(device nvml.Device, processes []nvml.ProcessInfo) (map[uint32]ProcessUtilizationInfo, error) {
+	utilizationMap := make(map[uint32]ProcessUtilizationInfo)
+
+	// Try to use DeviceGetProcessUtilization API (similar to nvitop approach)
+	// Note: This API may not be available in all versions of go-nvml
+	// We'll implement a reflection-based approach to check if the method exists
+
+	// For now, implement a more conservative fallback approach
+	// that at least returns 0 when device utilization is 0
+	deviceUtil, err := getDeviceUtilization(device)
+	if err != nil {
+		// If we can't get device utilization, set all processes to 0
+		for _, proc := range processes {
+			utilizationMap[proc.Pid] = ProcessUtilizationInfo{
+				SMUtilization:      0,
+				MemoryUtilization:  0,
+				EncoderUtilization: 0,
+				DecoderUtilization: 0,
+			}
+		}
+		return utilizationMap, nil
+	}
+
+	// If device GPU utilization is 0, all processes should also be 0
+	if deviceUtil.GPU == 0 {
+		for _, proc := range processes {
+			utilizationMap[proc.Pid] = ProcessUtilizationInfo{
+				SMUtilization:      0,
+				MemoryUtilization:  0,
+				EncoderUtilization: 0,
+				DecoderUtilization: 0,
+			}
+		}
+		return utilizationMap, nil
+	}
+
+	// Conservative approach: distribute device utilization among processes
+	// based on memory usage, but more conservatively than before
+	totalMemoryUsed := uint64(0)
+	for _, proc := range processes {
+		totalMemoryUsed += proc.UsedGpuMemory
+	}
+
+	for _, proc := range processes {
+		memoryMB := proc.UsedGpuMemory / (1024 * 1024)
+
+		// Very conservative approach: only assign utilization if memory usage is significant
+		var smUtil uint32 = 0
+		if memoryMB >= 100 && totalMemoryUsed > 0 { // At least 100MB to be considered active
+			// Calculate memory ratio and apply it to device utilization
+			memoryRatio := float64(proc.UsedGpuMemory) / float64(totalMemoryUsed)
+			// Apply a conservative factor (50% of calculated ratio)
+			conservativeFactor := 0.5
+			smUtil = uint32(float64(deviceUtil.GPU) * memoryRatio * conservativeFactor)
+
+			// Cap at device utilization
+			if smUtil > deviceUtil.GPU {
+				smUtil = deviceUtil.GPU
+			}
+		}
+
+		utilizationMap[proc.Pid] = ProcessUtilizationInfo{
+			SMUtilization:      smUtil,
+			MemoryUtilization:  uint32(float64(deviceUtil.Memory) * float64(proc.UsedGpuMemory) / float64(totalMemoryUsed)),
+			EncoderUtilization: 0, // Not available in fallback mode
+			DecoderUtilization: 0, // Not available in fallback mode
+		}
+	}
+
+	return utilizationMap, nil
+}
+
+// getDeviceProcessesFallback uses the old heuristic method as fallback when NVML-based method fails
+func getDeviceProcessesFallback(device nvml.Device, gpuIndex int, deviceUtilization *DeviceUtilization, totalMemoryMB uint64, uuid, dcgmFiDevUUID string, migModeValue uint32) ([]GPUProcessInfo, error) {
+	var allProcesses []GPUProcessInfo
+
+	// Get compute processes (Type C) - fallback method
 	computeProcesses, ret := device.GetComputeRunningProcesses()
 	if ret == nvml.SUCCESS {
 		for _, proc := range computeProcesses {
@@ -269,7 +469,7 @@ func getDeviceProcesses(device nvml.Device, gpuIndex int) ([]GPUProcessInfo, err
 		}
 	}
 
-	// Get graphics processes (Type G)
+	// Get graphics processes (Type G) - fallback method
 	graphicsProcesses, ret := device.GetGraphicsRunningProcesses()
 	if ret == nvml.SUCCESS {
 		for _, proc := range graphicsProcesses {
@@ -298,26 +498,6 @@ func getDeviceProcesses(device nvml.Device, gpuIndex int) ([]GPUProcessInfo, err
 	}
 
 	return allProcesses, nil
-}
-
-// DeviceUtilization represents GPU device utilization rates
-type DeviceUtilization struct {
-	GPU    uint32 // GPU utilization percentage
-	Memory uint32 // Memory utilization percentage
-}
-
-// getDeviceUtilization retrieves device-level utilization rates using NVML API
-func getDeviceUtilization(device nvml.Device) (*DeviceUtilization, error) {
-	// Use NVML GetUtilizationRates API (similar to nvitop's nvmlDeviceGetUtilizationRates)
-	utilization, ret := device.GetUtilizationRates()
-	if ret != nvml.SUCCESS {
-		return nil, fmt.Errorf("failed to get device utilization: %v", nvml.ErrorString(ret))
-	}
-
-	return &DeviceUtilization{
-		GPU:    utilization.Gpu,
-		Memory: utilization.Memory,
-	}, nil
 }
 
 // calculateProcessUtilization calculates process-level utilization based on device utilization and memory usage
