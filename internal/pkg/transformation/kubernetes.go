@@ -31,9 +31,11 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+
 	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
@@ -90,7 +92,7 @@ func NewPodMapper(c *appconfig.Config) *PodMapper {
 		Config: c,
 	}
 
-	if !c.KubernetesEnablePodLabels {
+	if !c.KubernetesEnablePodLabels && !c.KubernetesEnableDRA {
 		return podMapper
 	}
 
@@ -108,6 +110,15 @@ func NewPodMapper(c *appconfig.Config) *PodMapper {
 
 	podMapper.Client = clientset
 
+	if c.KubernetesEnableDRA {
+		resourceSliceManager, err := NewDRAResourceSliceManager()
+		if err != nil {
+			slog.Warn("Failed to get DRAResourceSliceManager, DRA pod labels will not be available", "error", err)
+			return podMapper
+		}
+		podMapper.ResourceSliceManager = resourceSliceManager
+		slog.Info("Started DRAResourceSliceManager")
+	}
 	return podMapper
 }
 
@@ -242,7 +253,6 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 			if err != nil {
 				return err
 			}
-
 			podInfo, exists := deviceToPod[deviceID]
 			if exists {
 				// Initialize Attributes map if it's nil to prevent panic
@@ -268,6 +278,61 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 				maps.Copy(metrics[counter][j].Labels, podInfo.Labels)
 			}
 		}
+
+	}
+
+	if p.Config.KubernetesEnableDRA {
+		deviceToPodsDRA := p.toDeviceToPodsDRA(pods)
+		slog.Debug(fmt.Sprintf("Device to pod mapping for DRA: %+v", deviceToPodsDRA))
+
+		for counter := range metrics {
+			var newmetrics []collector.Metric
+			// For each instrumented device, build list of metrics and create
+			// new metrics for any shared GPUs.
+			for j, val := range metrics[counter] {
+				deviceID, err := val.GetIDOfType(p.Config.KubernetesGPUIdType)
+				if err != nil {
+					return err
+				}
+
+				podInfos := deviceToPodsDRA[deviceID]
+				// For all containers using the GPU, extract and annotate a metric
+				// with the container info and the shared GPU label, if it exists.
+				// Notably, this will increase the number of unique metrics (i.e. labelsets)
+				// to by the number of containers sharing the GPU.
+				for _, pi := range podInfos {
+					metric, err := utils.DeepCopy(metrics[counter][j])
+					if err != nil {
+						return err
+					}
+					if !p.Config.UseOldNamespace {
+						metric.Attributes[podAttribute] = pi.Name
+						metric.Attributes[namespaceAttribute] = pi.Namespace
+						metric.Attributes[containerAttribute] = pi.Container
+					} else {
+						metric.Attributes[oldPodAttribute] = pi.Name
+						metric.Attributes[oldNamespaceAttribute] = pi.Namespace
+						metric.Attributes[oldContainerAttribute] = pi.Container
+					}
+					if dr := pi.DynamicResources; dr != nil {
+						metric.Attributes[draClaimName] = dr.ClaimName
+						metric.Attributes[draClaimNamespace] = dr.ClaimNamespace
+						metric.Attributes[draDriverName] = dr.DriverName
+						metric.Attributes[draPoolName] = dr.PoolName
+						metric.Attributes[draDeviceName] = dr.DeviceName
+
+						// Add MIG-specific labels if this is a MIG device
+						if migInfo := dr.MIGInfo; migInfo != nil {
+							metric.Attributes[draMigProfile] = migInfo.Profile
+							metric.Attributes[draMigDeviceUUID] = migInfo.MIGDeviceUUID
+						}
+						newmetrics = append(newmetrics, metric)
+					}
+				}
+			}
+			metrics[counter] = newmetrics
+		}
+		return nil
 	}
 
 	return nil
@@ -315,6 +380,89 @@ func getSharedGPU(deviceID string) (string, bool) {
 		return strings.Split(deviceID, "::")[1], true
 	}
 	return "", false
+}
+
+func (p *PodMapper) toDeviceToPodsDRA(devicePods *podresourcesapi.ListPodResourcesResponse) map[string][]PodInfo {
+	deviceToPodsMap := make(map[string][]PodInfo)
+	labelCache := make(map[string]map[string]string) // Cache to avoid duplicate API calls
+
+	slog.Debug("Processing pod dynamic resources", "totalPods", len(devicePods.GetPodResources()))
+	// Track pod+namespace+container combinations per device
+	// UUID -> "podName/namespace/containerName" -> bool
+	processedPods := make(map[string]map[string]bool)
+
+	for _, pod := range devicePods.GetPodResources() {
+		podName := pod.GetName()
+		podNamespace := pod.GetNamespace()
+		for _, container := range pod.GetContainers() {
+			cntName := container.GetName()
+			slog.Debug("Processing container",
+				"podName", podName,
+				"namespace", podNamespace,
+				"containerName", cntName)
+			if dynamicResources := container.GetDynamicResources(); len(dynamicResources) > 0 && p.ResourceSliceManager != nil {
+				for _, dr := range dynamicResources {
+					for _, claimResource := range dr.GetClaimResources() {
+						draDriverName := claimResource.GetDriverName()
+						if draDriverName != DRAGPUDriverName {
+							continue
+						}
+						draPoolName := claimResource.GetPoolName()
+						draDeviceName := claimResource.GetDeviceName()
+
+						mappingKey, migInfo := p.ResourceSliceManager.GetDeviceInfo(draPoolName, draDeviceName)
+						if mappingKey == "" {
+							slog.Debug(fmt.Sprintf("No UUID for %s/%s", draPoolName, draDeviceName))
+							continue
+						}
+
+						// Create unique key for pod+namespace+container combination
+						podContainerKey := podName + "/" + podNamespace + "/" + cntName
+
+						// Initialize tracker for this device if needed
+						if processedPods[mappingKey] == nil {
+							processedPods[mappingKey] = make(map[string]bool)
+						}
+
+						// Skip if we already processed this pod+container for this device
+						if processedPods[mappingKey][podContainerKey] {
+							continue
+						}
+
+						podInfo := p.createPodInfo(pod, container, labelCache)
+						drInfo := DynamicResourceInfo{
+							ClaimName:      dr.GetClaimName(),
+							ClaimNamespace: dr.GetClaimNamespace(),
+							DriverName:     draDriverName,
+							PoolName:       draPoolName,
+							DeviceName:     draDeviceName,
+						}
+						if migInfo != nil {
+							drInfo.MIGInfo = migInfo
+							slog.Debug("Added MIG pod mapping",
+								"parentUUID", mappingKey,
+								"migDevice", migInfo.MIGDeviceUUID,
+								"migProfile", migInfo.Profile,
+								"pod", podContainerKey)
+						} else {
+							slog.Debug("Added GPU pod mapping",
+								"deviceUUID", mappingKey,
+								"pod", podContainerKey)
+						}
+
+						podInfo.DynamicResources = &drInfo
+						deviceToPodsMap[mappingKey] = append(deviceToPodsMap[mappingKey], podInfo)
+						processedPods[mappingKey][podContainerKey] = true
+					}
+				}
+			}
+
+		}
+	}
+	slog.Debug("Completed toDeviceToPodsDRA transformation",
+		"totalMappings", len(deviceToPodsMap),
+		"deviceToPodsMap", fmt.Sprintf("%+v", deviceToPodsMap))
+	return deviceToPodsMap
 }
 
 // toDeviceToSharingPods uses the same general logic as toDeviceToPod but
@@ -418,6 +566,13 @@ func (p *PodMapper) toDeviceToPod(
 					"containerName", container.GetName())
 			}
 
+			podInfo := p.createPodInfo(pod, container, labelCache)
+			slog.Debug("Created pod info",
+				"podInfo", fmt.Sprintf("%+v", podInfo),
+				"podName", pod.GetName(),
+				"namespace", pod.GetNamespace(),
+				"containerName", container.GetName())
+
 			for _, device := range container.GetDevices() {
 				resourceName := device.GetResourceName()
 				slog.Debug("Processing device",
@@ -441,16 +596,6 @@ func (p *PodMapper) toDeviceToPod(
 						continue
 					}
 				}
-
-				podInfo := p.createPodInfo(pod, container, labelCache)
-				slog.Debug("Created pod info",
-					"podInfo", fmt.Sprintf("%+v", podInfo),
-					"podName", pod.GetName(),
-					"namespace", pod.GetNamespace(),
-					"containerName", container.GetName(),
-					"resourceName", resourceName,
-					"deviceIds", device.GetDeviceIds(),
-				)
 
 				for _, deviceID := range device.GetDeviceIds() {
 					slog.Debug("Processing device ID", "deviceID", deviceID,
