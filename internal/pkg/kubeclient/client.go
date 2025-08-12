@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,17 +14,23 @@
  * limitations under the License.
  */
 
-package counters
+package kubeclient
 
-const (
-	undefinedConfigMapData = "none"
-
-	cpuFieldsStart = 1100
-	dcpFieldsStart = 1000
-
-	DCGMExpClockEventsCount = "DCGM_EXP_CLOCK_EVENTS_COUNT"
-	DCGMExpXIDErrorsCount   = "DCGM_EXP_XID_ERRORS_COUNT"
-	DCGMExpGPUHealthStatus  = "DCGM_EXP_GPU_HEALTH_STATUS"
-	DCGMExpWeightedGPUUtil  = "DCGM_FI_DEV_WEIGHTED_GPU_UTIL"
-	DCGMExpP2PStatus        = "DCGM_EXP_P2P_STATUS"
+import (
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
+
+func GetKubeClient() (kubernetes.Interface, error) {
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	client, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return nil, err
+	}
+
+	return client, err
+}
