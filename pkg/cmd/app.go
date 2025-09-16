@@ -70,6 +70,7 @@ const (
 	CLICollectInterval            = "collect-interval"
 	CLIKubernetes                 = "kubernetes"
 	CLIKubernetesEnablePodLabels  = "kubernetes-enable-pod-labels"
+	CLIKubernetesEnablePodUID     = "kubernetes-enable-pod-uid"
 	CLIKubernetesGPUIDType        = "kubernetes-gpu-id-type"
 	CLIUseOldNamespace            = "use-old-namespace"
 	CLIRemoteHEInfo               = "remote-hostengine-info"
@@ -97,6 +98,7 @@ const (
 	CLIDumpRetention              = "dump-retention"
 	CLIDumpCompression            = "dump-compression"
 	CLIKubernetesEnableDRA        = "kubernetes-enable-dra"
+	CLIDisableStartupValidate     = "disable-startup-validate"
 )
 
 func NewApp(buildVersion ...string) *cli.App {
@@ -175,6 +177,12 @@ func NewApp(buildVersion ...string) *cli.App {
 			Value:   false,
 			Usage:   "Enable kubernetes pod labels in metrics. This parameter is effective only when the '--kubernetes' option is set to 'true'.",
 			EnvVars: []string{"DCGM_EXPORTER_KUBERNETES_ENABLE_POD_LABELS"},
+		},
+		&cli.BoolFlag{
+			Name:    CLIKubernetesEnablePodUID,
+			Value:   false,
+			Usage:   "Enable kubernetes pod UID in metrics. This parameter is effective only when the '--kubernetes' option is set to 'true'.",
+			EnvVars: []string{"DCGM_EXPORTER_KUBERNETES_ENABLE_POD_UID"},
 		},
 		&cli.StringFlag{
 			Name:  CLIKubernetesGPUIDType,
@@ -314,6 +322,12 @@ func NewApp(buildVersion ...string) *cli.App {
 			Usage:   "Capture metrics associated with GPUs managed by Kubernetes Dynamic Resource Allocation (DRA) API.",
 			EnvVars: []string{"KUBERNETES_ENABLE_DRA"},
 		},
+		&cli.BoolFlag{
+			Name:    CLIDisableStartupValidate,
+			Value:   false,
+			Usage:   "Disable validation checks during startup. Can be useful for running in minimal environments or testing",
+			EnvVars: []string{"DISABLE_STARTUP_VALIDATE"},
+		},
 	}
 
 	if runtime.GOOS == "linux" {
@@ -406,9 +420,12 @@ func startDCGMExporter(c *cli.Context) error {
 			return err
 		}
 
-		err = prerequisites.Validate()
-		if err != nil {
-			return err
+		// Only validate prerequisites if not disabled.
+		if !config.DisableStartupValidate {
+			err = prerequisites.Validate()
+			if err != nil {
+				return err
+			}
 		}
 
 		// Initialize DCGM Provider Instance
@@ -680,6 +697,7 @@ func contextToConfig(c *cli.Context) (*appconfig.Config, error) {
 		CollectInterval:            c.Int(CLICollectInterval),
 		Kubernetes:                 c.Bool(CLIKubernetes),
 		KubernetesEnablePodLabels:  c.Bool(CLIKubernetesEnablePodLabels),
+		KubernetesEnablePodUID:     c.Bool(CLIKubernetesEnablePodUID),
 		KubernetesGPUIdType:        appconfig.KubernetesGPUIDType(c.String(CLIKubernetesGPUIDType)),
 		CollectDCP:                 true,
 		UseOldNamespace:            c.Bool(CLIUseOldNamespace),
@@ -709,7 +727,8 @@ func contextToConfig(c *cli.Context) (*appconfig.Config, error) {
 			Retention:   c.Int(CLIDumpRetention),
 			Compression: c.Bool(CLIDumpCompression),
 		},
-		KubernetesEnableDRA: c.Bool(CLIKubernetesEnableDRA),
+		KubernetesEnableDRA:    c.Bool(CLIKubernetesEnableDRA),
+		DisableStartupValidate: c.Bool(CLIDisableStartupValidate),
 	}, nil
 }
 
