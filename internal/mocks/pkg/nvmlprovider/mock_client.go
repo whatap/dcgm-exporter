@@ -37,6 +37,11 @@ type MockNVML struct {
 	isgomock struct{}
 }
 
+func (m *MockNVML) GetAllGPUProcessInfo() ([]nvmlprovider.GPUProcessInfo, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
 // MockNVMLMockRecorder is the mock recorder for MockNVML.
 type MockNVMLMockRecorder struct {
 	mock *MockNVML
