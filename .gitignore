@@ -240,3 +240,5 @@ $RECYCLE.BIN/
 # Windows shortcuts
 *.lnk
 .vscode/settings.json
+whatapDocs
+gpu-heatmap-dashboard
