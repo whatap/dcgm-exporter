@@ -23,6 +23,9 @@ import (
 // GetTransformations return list of transformation applicable for metrics
 func GetTransformations(c *appconfig.Config) []Transform {
 	var transformations []Transform
+
+	transformations = append(transformations, NewWeightedUtil())
+
 	if c.Kubernetes {
 		podMapper := NewPodMapper(c)
 		transformations = append(transformations, podMapper)
