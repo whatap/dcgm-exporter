@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/NVIDIA/go-nvml/pkg/nvml"
 )
@@ -62,13 +63,17 @@ func SetClient(n NVML) {
 // nvmlProvider implements NVML Interface
 type nvmlProvider struct {
 	initialized bool
+	migCache    map[string]*MIGDeviceInfo
+	lock        sync.RWMutex
 }
 
 func newNVMLProvider() (NVML, error) {
 	// Check if a NVML client already exists and return it if so.
-	if Client() != nil && Client().(nvmlProvider).initialized {
-		slog.Info("NVML already initialized.")
-		return Client(), nil
+	if Client() != nil {
+		if p, ok := Client().(*nvmlProvider); ok && p.initialized {
+			slog.Info("NVML already initialized.")
+			return Client(), nil
+		}
 	}
 
 	slog.Info("Attempting to initialize NVML library.")
@@ -76,13 +81,16 @@ func newNVMLProvider() (NVML, error) {
 	if ret != nvml.SUCCESS {
 		err := errors.New(nvml.ErrorString(ret))
 		slog.Error(fmt.Sprintf("Cannot init NVML library; err: %v", err))
-		return nvmlProvider{initialized: false}, err
+		return &nvmlProvider{initialized: false}, err
 	}
 
-	return nvmlProvider{initialized: true}, nil
+	return &nvmlProvider{
+		initialized: true,
+		migCache:    make(map[string]*MIGDeviceInfo),
+	}, nil
 }
 
-func (n nvmlProvider) preCheck() error {
+func (n *nvmlProvider) preCheck() error {
 	if !n.initialized {
 		return fmt.Errorf("NVML library not initialized")
 	}
@@ -91,18 +99,39 @@ func (n nvmlProvider) preCheck() error {
 }
 
 // GetMIGDeviceInfoByID returns information about MIG DEVICE by ID
-func (n nvmlProvider) GetMIGDeviceInfoByID(uuid string) (*MIGDeviceInfo, error) {
+func (n *nvmlProvider) GetMIGDeviceInfoByID(uuid string) (*MIGDeviceInfo, error) {
 	if err := n.preCheck(); err != nil {
 		slog.Error(fmt.Sprintf("failed to get MIG Device Info; err: %v", err))
 		return nil, err
 	}
 
+	n.lock.RLock()
+	if info, ok := n.migCache[uuid]; ok {
+		n.lock.RUnlock()
+		return info, nil
+	}
+	n.lock.RUnlock()
+
 	device, ret := nvml.DeviceGetHandleByUUID(uuid)
 	if ret == nvml.SUCCESS {
-		return getMIGDeviceInfoForNewDriver(device)
+		info, err := getMIGDeviceInfoForNewDriver(device)
+		if err == nil {
+			n.lock.Lock()
+			n.migCache[uuid] = info
+			n.lock.Unlock()
+			return info, nil
+		}
+		return nil, err
 	}
 
-	return getMIGDeviceInfoForOldDriver(uuid)
+	info, err := getMIGDeviceInfoForOldDriver(uuid)
+	if err == nil {
+		n.lock.Lock()
+		n.migCache[uuid] = info
+		n.lock.Unlock()
+		return info, nil
+	}
+	return nil, err
 }
 
 // getMIGDeviceInfoForNewDriver identifies MIG Device Information for drivers >= R470 (470.42.01+),
@@ -167,7 +196,7 @@ func getMIGDeviceInfoForOldDriver(uuid string) (*MIGDeviceInfo, error) {
 }
 
 // Cleanup performs cleanup operations for the NVML provider
-func (n nvmlProvider) Cleanup() {
+func (n *nvmlProvider) Cleanup() {
 	if err := n.preCheck(); err == nil {
 		reset()
 	}

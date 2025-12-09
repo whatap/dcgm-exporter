@@ -24,7 +24,7 @@ import (
 
 func TestGetMIGDeviceInfoByID_When_NVML_Not_Initialized(t *testing.T) {
 	validMIGUUID := "MIG-GPU-b8ea3855-276c-c9cb-b366-c6fa655957c5/1/5"
-	newNvmlProvider := nvmlProvider{}
+	newNvmlProvider := &nvmlProvider{}
 
 	deviceInfo, err := newNvmlProvider.GetMIGDeviceInfoByID(validMIGUUID)
 	assert.Error(t, err, "uuid: %v, Device Info: %+v", validMIGUUID, deviceInfo)
@@ -33,7 +33,7 @@ func TestGetMIGDeviceInfoByID_When_NVML_Not_Initialized(t *testing.T) {
 func TestGetMIGDeviceInfoByID_When_DriverVersion_Below_R470(t *testing.T) {
 	Initialize()
 	assert.NotNil(t, Client(), "expected NVML Client to be not nil")
-	assert.True(t, Client().(nvmlProvider).initialized, "expected Client to be initialized")
+	assert.True(t, Client().(*nvmlProvider).initialized, "expected Client to be initialized")
 	defer Client().Cleanup()
 
 	tests := []struct {
@@ -95,7 +95,7 @@ func Test_newNVMLProvider(t *testing.T) {
 			name: "NVML not initialized",
 			preRunFunc: func() NVML {
 				reset()
-				return nvmlProvider{initialized: true}
+				return &nvmlProvider{initialized: true, migCache: make(map[string]*MIGDeviceInfo)}
 			},
 		},
 		{
