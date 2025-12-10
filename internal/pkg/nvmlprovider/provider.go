@@ -108,6 +108,9 @@ func (n *nvmlProvider) GetMIGDeviceInfoByID(uuid string) (*MIGDeviceInfo, error)
 	n.lock.RLock()
 	if info, ok := n.migCache[uuid]; ok {
 		n.lock.RUnlock()
+		if info == nil {
+			return nil, fmt.Errorf("previously failed to get MIG device info")
+		}
 		return info, nil
 	}
 	n.lock.RUnlock()
@@ -121,6 +124,9 @@ func (n *nvmlProvider) GetMIGDeviceInfoByID(uuid string) (*MIGDeviceInfo, error)
 			n.lock.Unlock()
 			return info, nil
 		}
+		n.lock.Lock()
+		n.migCache[uuid] = nil
+		n.lock.Unlock()
 		return nil, err
 	}
 
@@ -131,6 +137,9 @@ func (n *nvmlProvider) GetMIGDeviceInfoByID(uuid string) (*MIGDeviceInfo, error)
 		n.lock.Unlock()
 		return info, nil
 	}
+	n.lock.Lock()
+	n.migCache[uuid] = nil
+	n.lock.Unlock()
 	return nil, err
 }
 
