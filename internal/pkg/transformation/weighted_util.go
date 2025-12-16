@@ -15,7 +15,8 @@ import (
 const (
 	gpuUtilID          = dcgm.DCGM_FI_DEV_GPU_UTIL
 	profGrEngineActive = dcgm.DCGM_FI_PROF_GR_ENGINE_ACTIVE
-	migMaxSlicesID     = 1212 // dcgm.DCGM_FI_DEV_MIG_MAX_SLICES
+	// Use official DCGM field constant instead of a hardcoded magic number
+	migMaxSlicesID = dcgm.DCGM_FI_DEV_MIG_MAX_SLICES
 )
 
 type WeightedUtil struct{}
