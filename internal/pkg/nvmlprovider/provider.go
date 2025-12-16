@@ -82,10 +82,13 @@ func newNVMLProvider() (NVML, error) {
 	if ret != nvml.SUCCESS {
 		err := errors.New(nvml.ErrorString(ret))
 		slog.Error(fmt.Sprintf("Cannot init NVML library; err: %v", err))
-		return nvmlProvider{initialized: false}, err
+		return &nvmlProvider{initialized: false}, err
 	}
 
-	return &nvmlProvider{initialized: true, migCache: make(map[string]*MIGDeviceInfo)}, nil
+	return &nvmlProvider{
+		initialized: true,
+		migCache:    make(map[string]*MIGDeviceInfo),
+	}, nil
 }
 
 func (n *nvmlProvider) preCheck() error {
