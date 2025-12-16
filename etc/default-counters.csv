@@ -75,6 +75,9 @@ DCGM_FI_DEV_ROW_REMAP_FAILURE,           gauge,   Whether remapping of rows has 
 
 # Static configuration information. These appear as labels on the other metrics
 DCGM_FI_DRIVER_VERSION,        label, Driver Version
+# MIG configuration labels
+DCGM_FI_DEV_MIG_MODE,          label, MIG mode enabled (1) or disabled (0)
+DCGM_FI_DEV_MIG_MAX_SLICES,    label, Maximum compute slices supported by the physical GPU
 # DCGM_FI_NVML_VERSION,          label, NVML Version
 # DCGM_FI_DEV_BRAND,             label, Device Brand
 # DCGM_FI_DEV_SERIAL,            label, Device Serial Number

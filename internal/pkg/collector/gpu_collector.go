@@ -132,6 +132,10 @@ func (c *DCGMCollector) GetMetrics() (MetricsByCounter, error) {
 		}
 	}
 
+	// After collecting base metrics, compute weighted GPU utilization metric
+	// This will append DCGM_FI_DEV_WEIGHTED_GPU_UTIL to the metrics map.
+	c.calculateWeightedGPUUtil(metrics)
+
 	return metrics, nil
 }
 
@@ -173,15 +177,15 @@ func toSwitchMetric(
 			continue
 		} else {
 			m = Metric{
-				Counter:      counter,
-				Value:        v,
-				UUID:         uuid,
-				NvLink:       fmt.Sprintf("%d", mi.Entity.EntityId),
-				NvSwitch:     fmt.Sprintf("nvswitch%d", mi.ParentId),
-				Hostname:     hostname,
-				Labels:       labels,
-				Attributes:   nil,
-				ParentType:   mi.ParentType,
+				Counter:    counter,
+				Value:      v,
+				UUID:       uuid,
+				NvLink:     fmt.Sprintf("%d", mi.Entity.EntityId),
+				NvSwitch:   fmt.Sprintf("nvswitch%d", mi.ParentId),
+				Hostname:   hostname,
+				Labels:     labels,
+				Attributes: nil,
+				ParentType: mi.ParentType,
 			}
 		}
 

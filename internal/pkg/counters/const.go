@@ -26,4 +26,6 @@ const (
 	DCGMExpXIDErrorsCount   = "DCGM_EXP_XID_ERRORS_COUNT"
 	DCGMExpGPUHealthStatus  = "DCGM_EXP_GPU_HEALTH_STATUS"
 	DCGMExpP2PStatus        = "DCGM_EXP_P2P_STATUS"
+	// Weighted GPU Utilization (custom exporter metric)
+	DCGMExpWeightedGPUUtil = "DCGM_FI_DEV_WEIGHTED_GPU_UTIL"
 )
