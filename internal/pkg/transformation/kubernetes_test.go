@@ -944,3 +944,41 @@ func TestProcessPodMapper_WithLabelsAndUID(t *testing.T) {
 		}
 	}
 }
+
+func TestProcessPodMapper_WithNilAttributesAndLabels(t *testing.T) {
+	pm := &PodMapper{
+		Config: &appconfig.Config{
+			KubernetesGPUIdType: appconfig.GPUUID,
+		},
+		deviceToPod: map[string]PodInfo{
+			"gpu-0": {
+				Name:      "pod-0",
+				Namespace: "default",
+				Container: "ctr-0",
+				UID:       "uid-0",
+				Labels:    map[string]string{"app": "test"},
+			},
+		},
+	}
+
+	counter := counters.Counter{FieldID: 1, FieldName: "test_counter", PromType: "gauge"}
+	metrics := collector.MetricsByCounter{
+		counter: {
+			{
+				GPUUUID: "gpu-0",
+				Counter: counter,
+			},
+		},
+	}
+
+	err := pm.Process(metrics, nil)
+	require.NoError(t, err)
+
+	metric := metrics[counter][0]
+	require.NotNil(t, metric.Attributes)
+	assert.Equal(t, "pod-0", metric.Attributes[podAttribute])
+	assert.Equal(t, "default", metric.Attributes[namespaceAttribute])
+	assert.Equal(t, "ctr-0", metric.Attributes[containerAttribute])
+	require.NotNil(t, metric.Labels)
+	assert.Equal(t, "test", metric.Labels["app"])
+}

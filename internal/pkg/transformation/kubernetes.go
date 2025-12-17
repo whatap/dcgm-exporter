@@ -258,6 +258,18 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, _ deviceinfo.Pro
 	deviceToPodsDRA := p.deviceToPodsDRA
 	p.mu.RUnlock()
 
+	ensureAttributes := func(metric *collector.Metric) {
+		if metric.Attributes == nil {
+			metric.Attributes = make(map[string]string)
+		}
+	}
+
+	ensureLabels := func(metric *collector.Metric) {
+		if metric.Labels == nil {
+			metric.Labels = make(map[string]string)
+		}
+	}
+
 	if p.Config.KubernetesVirtualGPUs {
 		if deviceToPods == nil {
 			return nil
@@ -276,6 +288,7 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, _ deviceinfo.Pro
 					if err != nil {
 						return err
 					}
+					ensureAttributes(&metric)
 					if !p.Config.UseOldNamespace {
 						metric.Attributes[podAttribute] = pi.Name
 						metric.Attributes[namespaceAttribute] = pi.Namespace
@@ -309,6 +322,7 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, _ deviceinfo.Pro
 					return err
 				}
 				if podInfo, exists := deviceToPod[deviceID]; exists {
+					ensureAttributes(&metrics[counter][j])
 					if !p.Config.UseOldNamespace {
 						metrics[counter][j].Attributes[podAttribute] = podInfo.Name
 						metrics[counter][j].Attributes[namespaceAttribute] = podInfo.Namespace
@@ -319,6 +333,7 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, _ deviceinfo.Pro
 						metrics[counter][j].Attributes[oldContainerAttribute] = podInfo.Container
 					}
 					metrics[counter][j].Attributes[uidAttribute] = podInfo.UID
+					ensureLabels(&metrics[counter][j])
 					maps.Copy(metrics[counter][j].Labels, podInfo.Labels)
 				}
 			}
@@ -342,6 +357,7 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, _ deviceinfo.Pro
 							if err != nil {
 								return err
 							}
+							ensureAttributes(&metric)
 							if !p.Config.UseOldNamespace {
 								metric.Attributes[podAttribute] = pi.Name
 								metric.Attributes[namespaceAttribute] = pi.Namespace
