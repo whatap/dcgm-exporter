@@ -66,6 +66,21 @@ func (mr *MockNVMLMockRecorder) Cleanup() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Cleanup", reflect.TypeOf((*MockNVML)(nil).Cleanup))
 }
 
+// GetAllGPUProcessInfo mocks base method.
+func (m *MockNVML) GetAllGPUProcessInfo() ([]nvmlprovider.GPUProcessInfo, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetAllGPUProcessInfo")
+	ret0, _ := ret[0].([]nvmlprovider.GPUProcessInfo)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetAllGPUProcessInfo indicates an expected call of GetAllGPUProcessInfo.
+func (mr *MockNVMLMockRecorder) GetAllGPUProcessInfo() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllGPUProcessInfo", reflect.TypeOf((*MockNVML)(nil).GetAllGPUProcessInfo))
+}
+
 // GetMIGDeviceInfoByID mocks base method.
 func (m *MockNVML) GetMIGDeviceInfoByID(arg0 string) (*nvmlprovider.MIGDeviceInfo, error) {
 	m.ctrl.T.Helper()

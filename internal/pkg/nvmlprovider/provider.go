@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -202,6 +203,162 @@ func getMIGDeviceInfoForOldDriver(uuid string) (*MIGDeviceInfo, error) {
 		GPUInstanceID:     gi,
 		ComputeInstanceID: ci,
 	}, nil
+}
+
+// GetAllGPUProcessInfo returns information about all GPU processes across all devices
+func (n *nvmlProvider) GetAllGPUProcessInfo() ([]GPUProcessInfo, error) {
+	if err := n.preCheck(); err != nil {
+		return nil, err
+	}
+
+	var allProcesses []GPUProcessInfo
+
+	// Get device count
+	count, ret := nvml.DeviceGetCount()
+	if ret != nvml.SUCCESS {
+		return nil, fmt.Errorf("failed to get device count: %v", nvml.ErrorString(ret))
+	}
+
+	// Process each device
+	for i := 0; i < count; i++ {
+		device, ret := nvml.DeviceGetHandleByIndex(i)
+		if ret != nvml.SUCCESS {
+			continue
+		}
+
+		// Check for MIG mode
+		isMIG := false
+		mode, _, ret := device.GetMigMode()
+		if ret == nvml.SUCCESS && mode == nvml.DEVICE_MIG_ENABLE {
+			// Try to find MIG devices
+			maxMigs, ret := device.GetMaxMigDeviceCount()
+			if ret == nvml.SUCCESS {
+				foundMigs := false
+				for j := 0; j < maxMigs; j++ {
+					migDevice, ret := device.GetMigDeviceHandleByIndex(j)
+					if ret != nvml.SUCCESS {
+						continue
+					}
+					foundMigs = true
+					// Get processes for this MIG device
+					// We pass 'i' as the parent device index.
+					processes, err := getDeviceProcesses(migDevice, i)
+					if err == nil {
+						allProcesses = append(allProcesses, processes...)
+					}
+				}
+				if foundMigs {
+					isMIG = true
+				}
+			}
+		}
+
+		// If not MIG or no MIG devices found, check the device itself
+		if !isMIG {
+			processes, err := getDeviceProcesses(device, i)
+			if err != nil {
+				continue
+			}
+			allProcesses = append(allProcesses, processes...)
+		}
+	}
+
+	return allProcesses, nil
+}
+
+// getDeviceProcesses retrieves all processes running on a specific GPU device
+func getDeviceProcesses(device nvml.Device, gpuIndex int) ([]GPUProcessInfo, error) {
+	var allProcesses []GPUProcessInfo
+
+	uuid, ret := device.GetUUID()
+	if ret != nvml.SUCCESS {
+		return nil, fmt.Errorf("failed to get device uuid: %v", nvml.ErrorString(ret))
+	}
+
+	// Get utilization info (best effort)
+	type utilInfo struct {
+		SmUtil  uint32
+		MemUtil uint32
+	}
+	utilMap := make(map[uint32]utilInfo)
+	utils, ret := device.GetProcessUtilization(0)
+	if ret == nvml.SUCCESS {
+		for _, u := range utils {
+			utilMap[u.Pid] = utilInfo{
+				SmUtil:  u.SmUtil,
+				MemUtil: u.MemUtil,
+			}
+		}
+	}
+
+	// Get compute processes (Type C)
+	computeProcesses, ret := device.GetComputeRunningProcesses()
+	if ret == nvml.SUCCESS {
+		for _, proc := range computeProcesses {
+			memoryMB := proc.UsedGpuMemory / (1024 * 1024)
+			info := GPUProcessInfo{
+				Device:   gpuIndex,
+				PID:      proc.Pid,
+				Type:     "C",
+				Command:  getProcessName(proc.Pid),
+				MemoryMB: memoryMB,
+				UUID:     uuid,
+			}
+			if u, ok := utilMap[proc.Pid]; ok {
+				info.SmUtil = u.SmUtil
+				info.MemUtil = u.MemUtil
+			}
+			allProcesses = append(allProcesses, info)
+		}
+	}
+
+	// Get graphics processes (Type G)
+	graphicsProcesses, ret := device.GetGraphicsRunningProcesses()
+	if ret == nvml.SUCCESS {
+		for _, proc := range graphicsProcesses {
+			memoryMB := proc.UsedGpuMemory / (1024 * 1024)
+			info := GPUProcessInfo{
+				Device:   gpuIndex,
+				PID:      proc.Pid,
+				Type:     "G",
+				Command:  getProcessName(proc.Pid),
+				MemoryMB: memoryMB,
+				UUID:     uuid,
+			}
+			if u, ok := utilMap[proc.Pid]; ok {
+				info.SmUtil = u.SmUtil
+				info.MemUtil = u.MemUtil
+			}
+			allProcesses = append(allProcesses, info)
+		}
+	}
+
+	return allProcesses, nil
+}
+
+// getProcessName retrieves the full process command path from PID
+func getProcessName(pid uint32) string {
+	// Try to read from /proc/<pid>/cmdline first (full command line) - Linux
+	cmdlinePath := fmt.Sprintf("/proc/%d/cmdline", pid)
+	if data, err := os.ReadFile(cmdlinePath); err == nil {
+		// cmdline uses null bytes as separators, so we take the first part
+		cmdline := string(data)
+		if idx := strings.Index(cmdline, "\x00"); idx > 0 {
+			cmdline = cmdline[:idx]
+		}
+		// Return the full command path (like /Xwayland)
+		if cmdline != "" {
+			return cmdline
+		}
+	}
+
+	// Fallback to /proc/<pid>/comm (process name only) - Linux
+	commPath := fmt.Sprintf("/proc/%d/comm", pid)
+	if data, err := os.ReadFile(commPath); err == nil {
+		return strings.TrimSpace(string(data))
+	}
+
+	return "unknown"
 }
 
 // Cleanup performs cleanup operations for the NVML provider
