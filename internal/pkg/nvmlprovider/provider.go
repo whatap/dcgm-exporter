@@ -275,38 +275,16 @@ func getDeviceProcesses(device nvml.Device, gpuIndex int) ([]GPUProcessInfo, err
 		return nil, fmt.Errorf("failed to get device uuid: %v", nvml.ErrorString(ret))
 	}
 
-	// Get utilization info (best effort)
-	type utilInfo struct {
-		SmUtil  uint32
-		MemUtil uint32
-	}
-	utilMap := make(map[uint32]utilInfo)
-	utils, ret := device.GetProcessUtilization(0)
-	if ret == nvml.SUCCESS {
-		for _, u := range utils {
-			utilMap[u.Pid] = utilInfo{
-				SmUtil:  u.SmUtil,
-				MemUtil: u.MemUtil,
-			}
-		}
-	}
-
 	// Get compute processes (Type C)
 	computeProcesses, ret := device.GetComputeRunningProcesses()
 	if ret == nvml.SUCCESS {
 		for _, proc := range computeProcesses {
-			memoryMB := proc.UsedGpuMemory / (1024 * 1024)
 			info := GPUProcessInfo{
-				Device:   gpuIndex,
-				PID:      proc.Pid,
-				Type:     "C",
-				Command:  getProcessName(proc.Pid),
-				MemoryMB: memoryMB,
-				UUID:     uuid,
-			}
-			if u, ok := utilMap[proc.Pid]; ok {
-				info.SmUtil = u.SmUtil
-				info.MemUtil = u.MemUtil
+				Device:  gpuIndex,
+				PID:     proc.Pid,
+				Type:    "C",
+				Command: getProcessName(proc.Pid),
+				UUID:    uuid,
 			}
 			allProcesses = append(allProcesses, info)
 		}
@@ -316,18 +294,12 @@ func getDeviceProcesses(device nvml.Device, gpuIndex int) ([]GPUProcessInfo, err
 	graphicsProcesses, ret := device.GetGraphicsRunningProcesses()
 	if ret == nvml.SUCCESS {
 		for _, proc := range graphicsProcesses {
-			memoryMB := proc.UsedGpuMemory / (1024 * 1024)
 			info := GPUProcessInfo{
-				Device:   gpuIndex,
-				PID:      proc.Pid,
-				Type:     "G",
-				Command:  getProcessName(proc.Pid),
-				MemoryMB: memoryMB,
-				UUID:     uuid,
-			}
-			if u, ok := utilMap[proc.Pid]; ok {
-				info.SmUtil = u.SmUtil
-				info.MemUtil = u.MemUtil
+				Device:  gpuIndex,
+				PID:     proc.Pid,
+				Type:    "G",
+				Command: getProcessName(proc.Pid),
+				UUID:    uuid,
 			}
 			allProcesses = append(allProcesses, info)
 		}

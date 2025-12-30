@@ -19,13 +19,10 @@
 package nvmlprovider
 
 type GPUProcessInfo struct {
-	Device   int
-	PID      uint32
-	Type     string
-	Command  string
-	MemoryMB uint64
-	SmUtil   uint32
-	MemUtil  uint32
+	Device  int
+	PID     uint32
+	Type    string
+	Command string
 	// UUID is the unique identifier of the GPU or MIG instance where the process is running
 	UUID string
 }
