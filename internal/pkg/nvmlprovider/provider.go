@@ -226,6 +226,12 @@ func (n *nvmlProvider) GetAllGPUProcessInfo() ([]GPUProcessInfo, error) {
 			continue
 		}
 
+		parentUUID, ret := device.GetUUID()
+		if ret != nvml.SUCCESS {
+			slog.Warn("Failed to get device UUID", "index", i, "error", nvml.ErrorString(ret))
+			continue
+		}
+
 		// Check for MIG mode
 		isMIG := false
 		mode, _, ret := device.GetMigMode()
@@ -242,7 +248,7 @@ func (n *nvmlProvider) GetAllGPUProcessInfo() ([]GPUProcessInfo, error) {
 					foundMigs = true
 					// Get processes for this MIG device
 					// We pass 'i' as the parent device index.
-					processes, err := getDeviceProcesses(migDevice, i)
+					processes, err := getDeviceProcesses(migDevice, i, parentUUID)
 					if err == nil {
 						allProcesses = append(allProcesses, processes...)
 					}
@@ -255,7 +261,7 @@ func (n *nvmlProvider) GetAllGPUProcessInfo() ([]GPUProcessInfo, error) {
 
 		// If not MIG or no MIG devices found, check the device itself
 		if !isMIG {
-			processes, err := getDeviceProcesses(device, i)
+			processes, err := getDeviceProcesses(device, i, parentUUID)
 			if err != nil {
 				continue
 			}
@@ -267,7 +273,7 @@ func (n *nvmlProvider) GetAllGPUProcessInfo() ([]GPUProcessInfo, error) {
 }
 
 // getDeviceProcesses retrieves all processes running on a specific GPU device
-func getDeviceProcesses(device nvml.Device, gpuIndex int) ([]GPUProcessInfo, error) {
+func getDeviceProcesses(device nvml.Device, gpuIndex int, parentUUID string) ([]GPUProcessInfo, error) {
 	var allProcesses []GPUProcessInfo
 
 	uuid, ret := device.GetUUID()
@@ -280,11 +286,12 @@ func getDeviceProcesses(device nvml.Device, gpuIndex int) ([]GPUProcessInfo, err
 	if ret == nvml.SUCCESS {
 		for _, proc := range computeProcesses {
 			info := GPUProcessInfo{
-				Device:  gpuIndex,
-				PID:     proc.Pid,
-				Type:    "C",
-				Command: getProcessName(proc.Pid),
-				UUID:    uuid,
+				Device:     gpuIndex,
+				PID:        proc.Pid,
+				Type:       "C",
+				Command:    getProcessName(proc.Pid),
+				UUID:       uuid,
+				ParentUUID: parentUUID,
 			}
 			allProcesses = append(allProcesses, info)
 		}
@@ -295,11 +302,12 @@ func getDeviceProcesses(device nvml.Device, gpuIndex int) ([]GPUProcessInfo, err
 	if ret == nvml.SUCCESS {
 		for _, proc := range graphicsProcesses {
 			info := GPUProcessInfo{
-				Device:  gpuIndex,
-				PID:     proc.Pid,
-				Type:    "G",
-				Command: getProcessName(proc.Pid),
-				UUID:    uuid,
+				Device:     gpuIndex,
+				PID:        proc.Pid,
+				Type:       "G",
+				Command:    getProcessName(proc.Pid),
+				UUID:       uuid,
+				ParentUUID: parentUUID,
 			}
 			allProcesses = append(allProcesses, info)
 		}

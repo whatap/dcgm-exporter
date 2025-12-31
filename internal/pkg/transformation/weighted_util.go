@@ -95,7 +95,7 @@ func (t *WeightedUtil) computeNonMIG(metrics collector.MetricsByCounter) []colle
 		}
 		newMetric.Value = strconv.FormatFloat(weightedVal, 'f', -1, 64)
 		newMetric.Labels["calculation_method"] = "direct"
-		newMetric.Labels["DCGM_FI_DEV_UUID"] = newMetric.UUID
+		newMetric.Labels["DCGM_FI_DEV_UUID"] = newMetric.GPUUUID
 
 		newMetrics = append(newMetrics, newMetric)
 	}
@@ -211,7 +211,6 @@ func (t *WeightedUtil) computeMIG(metrics collector.MetricsByCounter) []collecto
 					// Clear MIG specific fields/labels
 					newMetric.MigProfile = ""
 					newMetric.GPUInstanceID = ""
-					newMetric.UUID = newMetric.GPUUUID // Revert UUID to Physical UUID if possible
 					break
 				}
 			}
@@ -227,7 +226,7 @@ func (t *WeightedUtil) computeMIG(metrics collector.MetricsByCounter) []collecto
 
 		// Set calculation method
 		newMetric.Labels["calculation_method"] = "weighted_sum"
-		newMetric.Labels["DCGM_FI_DEV_UUID"] = newMetric.UUID
+		newMetric.Labels["DCGM_FI_DEV_UUID"] = newMetric.GPUUUID
 
 		newMetrics = append(newMetrics, newMetric)
 	}

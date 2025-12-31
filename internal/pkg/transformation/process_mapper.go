@@ -33,6 +33,10 @@ func (t *ProcessMapper) Process(metrics collector.MetricsByCounter, _ deviceinfo
 		if p.UUID != "" {
 			procMap[p.UUID] = append(procMap[p.UUID], p)
 		}
+		// Also index by ParentUUID (Physical GPU) to support physical metrics (like WeightedUtil) matching MIG processes
+		if p.ParentUUID != "" && p.ParentUUID != p.UUID {
+			procMap[p.ParentUUID] = append(procMap[p.ParentUUID], p)
+		}
 	}
 
 	// 3. Iterate over metrics and enrich

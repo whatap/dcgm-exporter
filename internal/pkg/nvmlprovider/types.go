@@ -25,6 +25,8 @@ type GPUProcessInfo struct {
 	Command string
 	// UUID is the unique identifier of the GPU or MIG instance where the process is running
 	UUID string
+	// ParentUUID is the unique identifier of the Physical GPU (populated when running on MIG)
+	ParentUUID string
 }
 
 type NVML interface {
