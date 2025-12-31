@@ -102,6 +102,7 @@ const (
 	CLIDumpCompression                  = "dump-compression"
 	CLIKubernetesEnableDRA              = "kubernetes-enable-dra"
 	CLIDisableStartupValidate           = "disable-startup-validate"
+	CLICollectProcessInfo               = "collect-process-info"
 )
 
 func NewApp(buildVersion ...string) *cli.App {
@@ -342,6 +343,12 @@ func NewApp(buildVersion ...string) *cli.App {
 			Value:   false,
 			Usage:   "Disable validation checks during startup. Can be useful for running in minimal environments or testing",
 			EnvVars: []string{"DISABLE_STARTUP_VALIDATE"},
+		},
+		&cli.BoolFlag{
+			Name:    CLICollectProcessInfo,
+			Value:   true,
+			Usage:   "Enable process info collection",
+			EnvVars: []string{"DCGM_EXPORTER_PROCESS"},
 		},
 	}
 
@@ -756,6 +763,7 @@ func contextToConfig(c *cli.Context) (*appconfig.Config, error) {
 		},
 		KubernetesEnableDRA:    c.Bool(CLIKubernetesEnableDRA),
 		DisableStartupValidate: c.Bool(CLIDisableStartupValidate),
+		CollectProcessInfo:     c.Bool(CLICollectProcessInfo),
 	}, nil
 }
 

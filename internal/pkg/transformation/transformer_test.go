@@ -36,7 +36,8 @@ func TestGetTransformations(t *testing.T) {
 				Kubernetes: false,
 			},
 			assert: func(t *testing.T, transforms []Transform) {
-				assert.Len(t, transforms, 0)
+				// WeightedUtil + ProcessMapper
+				assert.Len(t, transforms, 2)
 			},
 		},
 		{
@@ -45,7 +46,8 @@ func TestGetTransformations(t *testing.T) {
 				Kubernetes: true,
 			},
 			assert: func(t *testing.T, transforms []Transform) {
-				assert.Len(t, transforms, 1)
+				// WeightedUtil + ProcessMapper + PodMapper
+				assert.Len(t, transforms, 3)
 			},
 		},
 		{
@@ -54,7 +56,8 @@ func TestGetTransformations(t *testing.T) {
 				HPCJobMappingDir: "/var/run/nvidia/slurm",
 			},
 			assert: func(t *testing.T, transforms []Transform) {
-				assert.Len(t, transforms, 1)
+				// WeightedUtil + ProcessMapper + HPCMapper
+				assert.Len(t, transforms, 3)
 			},
 		},
 	}

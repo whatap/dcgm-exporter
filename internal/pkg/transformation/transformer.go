@@ -25,7 +25,7 @@ func GetTransformations(c *appconfig.Config) []Transform {
 	var transformations []Transform
 
 	transformations = append(transformations, NewWeightedUtil())
-	transformations = append(transformations, NewProcessMapper())
+	transformations = append(transformations, NewProcessMapper(c))
 
 	if c.Kubernetes {
 		podMapper := NewPodMapper(c)

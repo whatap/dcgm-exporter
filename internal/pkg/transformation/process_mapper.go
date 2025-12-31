@@ -4,15 +4,20 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 )
 
-type ProcessMapper struct{}
+type ProcessMapper struct {
+	config *appconfig.Config
+}
 
-func NewProcessMapper() *ProcessMapper {
-	return &ProcessMapper{}
+func NewProcessMapper(c *appconfig.Config) *ProcessMapper {
+	return &ProcessMapper{
+		config: c,
+	}
 }
 
 func (t *ProcessMapper) Name() string {
@@ -20,6 +25,10 @@ func (t *ProcessMapper) Name() string {
 }
 
 func (t *ProcessMapper) Process(metrics collector.MetricsByCounter, _ deviceinfo.Provider) error {
+	if !t.config.CollectProcessInfo {
+		return nil
+	}
+
 	// 1. Get current process info from NVML
 	// We ignore error here to allow running without NVML process info if it fails transiently
 	processes, err := nvmlprovider.Client().GetAllGPUProcessInfo()
@@ -41,6 +50,10 @@ func (t *ProcessMapper) Process(metrics collector.MetricsByCounter, _ deviceinfo
 
 	// 3. Iterate over metrics and enrich
 	for counter, metricList := range metrics {
+		if counter.FieldName == "DCGM_FI_DEV_WEIGHTED_GPU_UTIL" {
+			continue
+		}
+
 		var newMetrics []collector.Metric
 
 		for _, m := range metricList {
