@@ -45,8 +45,17 @@ func (t *ProcessMapper) Process(metrics collector.MetricsByCounter, _ deviceinfo
 
 		for _, m := range metricList {
 			// Find processes for this GPU by UUID
-			// Metric.GPUUUID should match the UUID collected from NVML (including MIG UUIDs)
-			procs, ok := procMap[m.GPUUUID]
+			// Priority:
+			// 1. DCGM_FI_DEV_UUID label/attribute (Real MIG UUID for MIG metrics)
+			// 2. Metric.GPUUUID (Physical UUID fallback)
+			searchUUID := m.GPUUUID
+			if v, ok := m.Labels["DCGM_FI_DEV_UUID"]; ok && v != "" {
+				searchUUID = v
+			} else if v, ok := m.Attributes["DCGM_FI_DEV_UUID"]; ok && v != "" {
+				searchUUID = v
+			}
+
+			procs, ok := procMap[searchUUID]
 			if !ok || len(procs) == 0 {
 				// No processes found, keep original metric
 				newMetrics = append(newMetrics, m)
