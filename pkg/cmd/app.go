@@ -85,6 +85,8 @@ const (
 	CLIConfigMapData                    = "configmap-data"
 	CLIWebSystemdSocket                 = "web-systemd-socket"
 	CLIWebConfigFile                    = "web-config-file"
+	CLIWebReadTimeout                   = "web-read-timeout"
+	CLIWebWriteTimeout                  = "web-write-timeout"
 	CLIXIDCountWindowSize               = "xid-count-window-size"
 	CLIReplaceBlanksInModelName         = "replace-blanks-in-model-name"
 	CLIDebugMode                        = "debug"
@@ -241,6 +243,18 @@ func NewApp(buildVersion ...string) *cli.App {
 			EnvVars: []string{"DCGM_EXPORTER_WEB_CONFIG_FILE"},
 		},
 		&cli.IntFlag{
+			Name:    CLIWebReadTimeout,
+			Value:   10000,
+			Usage:   "Web server read timeout in milliseconds",
+			EnvVars: []string{"DCGM_EXPORTER_WEB_READ_TIMEOUT"},
+		},
+		&cli.IntFlag{
+			Name:    CLIWebWriteTimeout,
+			Value:   10000,
+			Usage:   "Web server write timeout in milliseconds",
+			EnvVars: []string{"DCGM_EXPORTER_WEB_WRITE_TIMEOUT"},
+		},
+		&cli.IntFlag{
 			Name:    CLIXIDCountWindowSize,
 			Aliases: []string{"x"},
 			Value:   int((5 * time.Minute).Milliseconds()),
@@ -346,7 +360,7 @@ func NewApp(buildVersion ...string) *cli.App {
 		},
 		&cli.BoolFlag{
 			Name:    CLICollectProcessInfo,
-			Value:   true,
+			Value:   false,
 			Usage:   "Enable process info collection",
 			EnvVars: []string{"DCGM_EXPORTER_PROCESS"},
 		},
@@ -745,6 +759,8 @@ func contextToConfig(c *cli.Context) (*appconfig.Config, error) {
 		ConfigMapData:                    c.String(CLIConfigMapData),
 		WebSystemdSocket:                 c.Bool(CLIWebSystemdSocket),
 		WebConfigFile:                    c.String(CLIWebConfigFile),
+		WebReadTimeout:                   c.Int(CLIWebReadTimeout),
+		WebWriteTimeout:                  c.Int(CLIWebWriteTimeout),
 		XIDCountWindowSize:               c.Int(CLIXIDCountWindowSize),
 		ReplaceBlanksInModelName:         c.Bool(CLIReplaceBlanksInModelName),
 		Debug:                            c.Bool(CLIDebugMode),

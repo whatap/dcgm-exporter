@@ -59,6 +59,8 @@ type Config struct {
 	MetricGroups                     []dcgm.MetricGroup
 	WebSystemdSocket                 bool
 	WebConfigFile                    string
+	WebReadTimeout                   int
+	WebWriteTimeout                  int
 	XIDCountWindowSize               int
 	ReplaceBlanksInModelName         bool
 	Debug                            bool
