@@ -23,6 +23,7 @@ dist/
 
 ## Directory-based project format:
 .idea/
+prd/
 # if you decide to remove above rule then ignore the following:
 
 # User-specific stuff

@@ -574,6 +574,7 @@ func (p *PodMapper) toDeviceToPod(
 	devicePods *podresourcesapi.ListPodResourcesResponse, deviceInfo deviceinfo.Provider,
 ) map[string]PodInfo {
 	deviceToPodMap := make(map[string]PodInfo)
+	uidToPodInfo := make(map[string]PodInfo)
 	metadataCache := make(map[string]PodMetadata) // Cache to avoid duplicate API calls
 
 	slog.Debug("Processing pod resources", "totalPods", len(devicePods.GetPodResources()))
@@ -615,6 +616,20 @@ func (p *PodMapper) toDeviceToPod(
 			}
 
 			podInfo := p.createPodInfo(pod, container, metadataCache)
+
+			// Store PodInfo by UID for process-based mapping correction
+			// Try to get UID from PodInfo first, then from metadataCache
+			uid := podInfo.UID
+			if uid == "" {
+				cacheKey := pod.GetNamespace() + "/" + pod.GetName()
+				if meta, ok := metadataCache[cacheKey]; ok {
+					uid = meta.UID
+				}
+			}
+			if uid != "" {
+				uidToPodInfo[uid] = podInfo
+			}
+
 			slog.Debug("Created pod info",
 				"podInfo", fmt.Sprintf("%+v", podInfo),
 				"podName", pod.GetName(),
@@ -769,6 +784,66 @@ func (p *PodMapper) toDeviceToPod(
 					deviceToPodMap[deviceID] = podInfo
 				}
 			}
+		}
+	}
+
+	// Process-based mapping correction
+	// This fixes issues where Kubelet's view of device assignment is stale or incorrect
+	if len(uidToPodInfo) > 0 {
+		processes, err := nvmlprovider.Client().GetAllGPUProcessInfo()
+		if err == nil {
+			for _, proc := range processes {
+				if proc.PID == 0 {
+					continue
+				}
+				podUID, err := GetPodUIDFromPID(uint64(proc.PID))
+				if err != nil {
+					continue
+				}
+				if podInfo, ok := uidToPodInfo[podUID]; ok {
+					// We found a process belonging to a known pod.
+					// Map the process's device to this pod.
+					deviceID := proc.UUID
+
+					// Handle MIG devices
+					if strings.HasPrefix(deviceID, appconfig.MIG_UUID_PREFIX) {
+						// Map using MIG-UUID
+						// If specific logic for logging overwrite is needed, it can be added here
+						deviceToPodMap[deviceID] = podInfo
+
+						// Map using GI Identifier if possible
+						migDevice, err := nvmlprovider.Client().GetMIGDeviceInfoByID(deviceID)
+						if err == nil && migDevice.GPUInstanceID >= 0 {
+							giIdentifier := deviceinfo.GetGPUInstanceIdentifier(deviceInfo, migDevice.ParentUUID, uint(migDevice.GPUInstanceID))
+							if existingPod, exists := deviceToPodMap[giIdentifier]; !exists || existingPod.UID != podInfo.UID {
+								slog.Info("Correcting MIG device mapping based on process",
+									"deviceID", deviceID,
+									"giIdentifier", giIdentifier,
+									"pod", podInfo.Name,
+									"pid", proc.PID,
+									"oldPod", existingPod.Name)
+								deviceToPodMap[giIdentifier] = podInfo
+							}
+						}
+
+						// Also map the short UUID (without prefix)
+						gpuUUID := deviceID[len(appconfig.MIG_UUID_PREFIX):]
+						deviceToPodMap[gpuUUID] = podInfo
+					} else {
+						// Full GPU
+						if existingPod, exists := deviceToPodMap[deviceID]; !exists || existingPod.UID != podInfo.UID {
+							slog.Info("Correcting device mapping based on process",
+								"deviceID", deviceID,
+								"pod", podInfo.Name,
+								"pid", proc.PID,
+								"oldPod", existingPod.Name)
+							deviceToPodMap[deviceID] = podInfo
+						}
+					}
+				}
+			}
+		} else {
+			slog.Debug("Failed to get process info for mapping correction", "error", err)
 		}
 	}
 
