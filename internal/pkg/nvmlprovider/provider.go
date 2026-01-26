@@ -272,6 +272,59 @@ func (n *nvmlProvider) GetAllGPUProcessInfo() ([]GPUProcessInfo, error) {
 	return allProcesses, nil
 }
 
+func (n *nvmlProvider) GetGPUUUIDs() ([]string, error) {
+	if err := n.preCheck(); err != nil {
+		return nil, err
+	}
+
+	var uuids []string
+
+	count, ret := nvml.DeviceGetCount()
+	if ret != nvml.SUCCESS {
+		return nil, fmt.Errorf("failed to get device count: %s", nvml.ErrorString(ret))
+	}
+
+	for i := 0; i < count; i++ {
+		device, ret := nvml.DeviceGetHandleByIndex(i)
+		if ret != nvml.SUCCESS {
+			continue
+		}
+
+		// Check for MIG mode
+		isMIG := false
+		mode, _, ret := device.GetMigMode()
+		if ret == nvml.SUCCESS && mode == nvml.DEVICE_MIG_ENABLE {
+			maxMigs, ret := device.GetMaxMigDeviceCount()
+			if ret == nvml.SUCCESS {
+				foundMigs := false
+				for j := 0; j < maxMigs; j++ {
+					migDevice, ret := device.GetMigDeviceHandleByIndex(j)
+					if ret != nvml.SUCCESS {
+						continue
+					}
+					foundMigs = true
+					uuid, ret := migDevice.GetUUID()
+					if ret == nvml.SUCCESS {
+						uuids = append(uuids, uuid)
+					}
+				}
+				if foundMigs {
+					isMIG = true
+				}
+			}
+		}
+
+		if !isMIG {
+			uuid, ret := device.GetUUID()
+			if ret == nvml.SUCCESS {
+				uuids = append(uuids, uuid)
+			}
+		}
+	}
+
+	return uuids, nil
+}
+
 // getDeviceProcesses retrieves all processes running on a specific GPU device
 func getDeviceProcesses(device nvml.Device, gpuIndex int, parentUUID string) ([]GPUProcessInfo, error) {
 	var allProcesses []GPUProcessInfo

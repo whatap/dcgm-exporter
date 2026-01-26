@@ -32,5 +32,6 @@ type GPUProcessInfo struct {
 type NVML interface {
 	GetMIGDeviceInfoByID(string) (*MIGDeviceInfo, error)
 	GetAllGPUProcessInfo() ([]GPUProcessInfo, error)
+	GetGPUUUIDs() ([]string, error)
 	Cleanup()
 }

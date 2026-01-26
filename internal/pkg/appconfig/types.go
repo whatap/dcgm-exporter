@@ -75,4 +75,6 @@ type Config struct {
 	KubernetesEnableDRA              bool
 	DisableStartupValidate           bool
 	CollectProcessInfo               bool
+	EnableSelfHealing                bool
+	SelfHealingInterval              int
 }

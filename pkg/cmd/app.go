@@ -105,6 +105,8 @@ const (
 	CLIKubernetesEnableDRA              = "kubernetes-enable-dra"
 	CLIDisableStartupValidate           = "disable-startup-validate"
 	CLICollectProcessInfo               = "collect-process-info"
+	CLIEnableSelfHealing                = "enable-self-healing"
+	CLISelfHealingInterval              = "self-healing-interval"
 )
 
 func NewApp(buildVersion ...string) *cli.App {
@@ -364,6 +366,18 @@ func NewApp(buildVersion ...string) *cli.App {
 			Usage:   "Enable process info collection",
 			EnvVars: []string{"DCGM_EXPORTER_PROCESS"},
 		},
+		&cli.BoolFlag{
+			Name:    CLIEnableSelfHealing,
+			Value:   true,
+			Usage:   "Enable self-healing (auto-restart) when GPU topology changes are detected",
+			EnvVars: []string{"DCGM_EXPORTER_ENABLE_SELF_HEALING"},
+		},
+		&cli.IntFlag{
+			Name:    CLISelfHealingInterval,
+			Value:   30,
+			Usage:   "Interval in seconds to check for GPU topology changes",
+			EnvVars: []string{"DCGM_EXPORTER_SELF_HEALING_INTERVAL"},
+		},
 	}
 
 	if runtime.GOOS == "linux" {
@@ -523,6 +537,10 @@ func startDCGMExporter(c *cli.Context) error {
 		}
 
 		go server.Run(ctx, stop, &wg)
+
+		if config.EnableSelfHealing {
+			go devicewatcher.WatchTopologyChanges(ctx, config.SelfHealingInterval)
+		}
 
 		sigs := newOSWatcher(syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP)
 
@@ -780,6 +798,8 @@ func contextToConfig(c *cli.Context) (*appconfig.Config, error) {
 		KubernetesEnableDRA:    c.Bool(CLIKubernetesEnableDRA),
 		DisableStartupValidate: c.Bool(CLIDisableStartupValidate),
 		CollectProcessInfo:     c.Bool(CLICollectProcessInfo),
+		EnableSelfHealing:      c.Bool(CLIEnableSelfHealing),
+		SelfHealingInterval:    c.Int(CLISelfHealingInterval),
 	}, nil
 }
 
