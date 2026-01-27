@@ -24,6 +24,7 @@ import (
 
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
+	listerv1 "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
@@ -44,12 +45,15 @@ type PodMapper struct {
 	ResourceSliceManager *DRAResourceSliceManager
 	labelFilterCache     *LabelFilterCache
 	// Fields for async processing
-	mu              sync.RWMutex
-	stopChan        chan struct{}
-	DeviceInfo      deviceinfo.Provider
-	deviceToPod     map[string]PodInfo
-	deviceToPods    map[string][]PodInfo
-	deviceToPodsDRA map[string][]PodInfo
+	mu                 sync.RWMutex
+	stopChan           chan struct{}
+	DeviceInfo         deviceinfo.Provider
+	deviceToPod        map[string]PodInfo
+	deviceToPods       map[string][]PodInfo
+	deviceToPodsDRA    map[string][]PodInfo
+	podInformerFactory informers.SharedInformerFactory
+	podLister          listerv1.PodLister
+	podInformerSynced  cache.InformerSynced
 }
 
 // LabelFilterCache provides efficient caching for label filtering decisions
@@ -89,8 +93,9 @@ type DRAResourceSliceManager struct {
 
 // PodMetadata holds pod metadata from API server
 type PodMetadata struct {
-	UID    string
-	Labels map[string]string
+	UID          string
+	Labels       map[string]string
+	ContainerIDs []string
 }
 
 type DynamicResourceInfo struct {

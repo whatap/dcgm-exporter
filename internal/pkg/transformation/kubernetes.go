@@ -35,8 +35,11 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/cache"
 
 	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1"
 
@@ -102,10 +105,6 @@ func NewPodMapper(c *appconfig.Config) *PodMapper {
 		stopChan:         make(chan struct{}),
 	}
 
-	if !c.KubernetesEnablePodLabels && !c.KubernetesEnablePodUID && !c.KubernetesEnableDRA {
-		return podMapper
-	}
-
 	clusterConfig, err := rest.InClusterConfig()
 	if err != nil {
 		slog.Warn("Failed to get in-cluster config, pod labels will not be available", "error", err)
@@ -119,6 +118,25 @@ func NewPodMapper(c *appconfig.Config) *PodMapper {
 	}
 
 	podMapper.Client = clientset
+
+	// Initialize Pod Informer
+	nodeName := stdos.Getenv("NODE_NAME")
+	var factory informers.SharedInformerFactory
+	if nodeName != "" {
+		slog.Info("Initializing Pod Informer", "nodeName", nodeName)
+		tweakListOptions := func(options *metav1.ListOptions) {
+			options.FieldSelector = fields.OneTermEqualSelector("spec.nodeName", nodeName).String()
+		}
+		factory = informers.NewSharedInformerFactoryWithOptions(clientset, 0, informers.WithTweakListOptions(tweakListOptions))
+	} else {
+		slog.Warn("NODE_NAME environment variable not set, watching all pods in cluster for metadata")
+		factory = informers.NewSharedInformerFactory(clientset, 0)
+	}
+
+	podMapper.podInformerFactory = factory
+	podInformer := factory.Core().V1().Pods()
+	podMapper.podLister = podInformer.Lister()
+	podMapper.podInformerSynced = podInformer.Informer().HasSynced
 
 	if c.KubernetesEnableDRA {
 		resourceSliceManager, err := NewDRAResourceSliceManager()
@@ -180,6 +198,15 @@ func (p *PodMapper) Name() string {
 }
 
 func (p *PodMapper) Run() {
+	if p.podInformerFactory != nil {
+		go p.podInformerFactory.Start(p.stopChan)
+		if !cache.WaitForCacheSync(p.stopChan, p.podInformerSynced) {
+			slog.Error("Failed to sync pod informer cache")
+			return
+		}
+		slog.Info("Pod informer cache synced")
+	}
+
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
@@ -286,7 +313,9 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, _ deviceinfo.Pro
 						metric.Attributes[oldNamespaceAttribute] = pi.Namespace
 						metric.Attributes[oldContainerAttribute] = pi.Container
 					}
-					metric.Attributes[uidAttribute] = pi.UID
+					if p.Config.KubernetesEnablePodUID {
+						metric.Attributes[uidAttribute] = pi.UID
+					}
 					if pi.VGPU != "" {
 						metric.Attributes[vgpuAttribute] = pi.VGPU
 					}
@@ -323,7 +352,9 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, _ deviceinfo.Pro
 						metrics[counter][j].Attributes[oldContainerAttribute] = podInfo.Container
 					}
 
-					metrics[counter][j].Attributes[uidAttribute] = podInfo.UID
+					if p.Config.KubernetesEnablePodUID {
+						metrics[counter][j].Attributes[uidAttribute] = podInfo.UID
+					}
 					maps.Copy(metrics[counter][j].Labels, podInfo.Labels)
 				}
 			}
@@ -432,7 +463,6 @@ func getSharedGPU(deviceID string) (string, bool) {
 
 func (p *PodMapper) toDeviceToPodsDRA(devicePods *podresourcesapi.ListPodResourcesResponse) map[string][]PodInfo {
 	deviceToPodsMap := make(map[string][]PodInfo)
-	labelCache := make(map[string]PodMetadata) // Cache to avoid duplicate API calls
 
 	slog.Debug("Processing pod dynamic resources", "totalPods", len(devicePods.GetPodResources()))
 	// Track pod+namespace+container combinations per device
@@ -477,7 +507,7 @@ func (p *PodMapper) toDeviceToPodsDRA(devicePods *podresourcesapi.ListPodResourc
 							continue
 						}
 
-						podInfo := p.createPodInfo(pod, container, labelCache)
+						podInfo := p.createPodInfo(pod, container)
 						drInfo := DynamicResourceInfo{
 							ClaimName:      dr.GetClaimName(),
 							ClaimNamespace: dr.GetClaimNamespace(),
@@ -522,10 +552,9 @@ func (p *PodMapper) toDeviceToPodsDRA(devicePods *podresourcesapi.ListPodResourc
 // GPU states.
 func (p *PodMapper) toDeviceToSharingPods(devicePods *podresourcesapi.ListPodResourcesResponse, deviceInfo deviceinfo.Provider) map[string][]PodInfo {
 	deviceToPodsMap := make(map[string][]PodInfo)
-	metadataCache := make(map[string]PodMetadata) // Cache to avoid duplicate API calls
 
 	p.iterateGPUDevices(devicePods, func(pod *podresourcesapi.PodResources, container *podresourcesapi.ContainerResources, device *podresourcesapi.ContainerDevices) {
-		podInfo := p.createPodInfo(pod, container, metadataCache)
+		podInfo := p.createPodInfo(pod, container)
 
 		for _, deviceID := range device.GetDeviceIds() {
 			if vgpu, ok := getSharedGPU(deviceID); ok {
@@ -575,7 +604,6 @@ func (p *PodMapper) toDeviceToPod(
 ) map[string]PodInfo {
 	deviceToPodMap := make(map[string]PodInfo)
 	uidToPodInfo := make(map[string]PodInfo)
-	metadataCache := make(map[string]PodMetadata) // Cache to avoid duplicate API calls
 
 	slog.Debug("Processing pod resources", "totalPods", len(devicePods.GetPodResources()))
 
@@ -615,19 +643,11 @@ func (p *PodMapper) toDeviceToPod(
 					"containerName", container.GetName())
 			}
 
-			podInfo := p.createPodInfo(pod, container, metadataCache)
+			podInfo := p.createPodInfo(pod, container)
 
 			// Store PodInfo by UID for process-based mapping correction
-			// Try to get UID from PodInfo first, then from metadataCache
-			uid := podInfo.UID
-			if uid == "" {
-				cacheKey := pod.GetNamespace() + "/" + pod.GetName()
-				if meta, ok := metadataCache[cacheKey]; ok {
-					uid = meta.UID
-				}
-			}
-			if uid != "" {
-				uidToPodInfo[uid] = podInfo
+			if podInfo.UID != "" {
+				uidToPodInfo[podInfo.UID] = podInfo
 			}
 
 			slog.Debug("Created pod info",
@@ -854,49 +874,31 @@ func (p *PodMapper) toDeviceToPod(
 }
 
 // createPodInfo creates a PodInfo struct with metadata if enabled
-func (p *PodMapper) createPodInfo(pod *podresourcesapi.PodResources, container *podresourcesapi.ContainerResources, metadataCache map[string]PodMetadata) PodInfo {
+func (p *PodMapper) createPodInfo(pod *podresourcesapi.PodResources, container *podresourcesapi.ContainerResources) PodInfo {
 	labels := map[string]string{}
 	uid := ""
-	cacheKey := pod.GetNamespace() + "/" + pod.GetName()
 
-	// Check if we have cached metadata
-	cachedMetadata, hasCache := metadataCache[cacheKey]
-
-	// Determine if we need labels
-	needLabels := p.Config.KubernetesEnablePodLabels && (cachedMetadata.Labels == nil)
-
-	// Determine if we need UID
-	needUID := p.Config.KubernetesEnablePodUID && cachedMetadata.UID == ""
-
-	// Only make API call if we need something that's not cached
-	if needLabels || needUID {
-		if podMetadata, err := p.getPodMetadata(pod.GetNamespace(), pod.GetName()); err != nil {
-			slog.Warn("Couldn't get pod metadata",
+	// Use PodLister to get metadata
+	if p.podLister != nil {
+		podObj, err := p.podLister.Pods(pod.GetNamespace()).Get(pod.GetName())
+		if err != nil {
+			slog.Debug("Could not find pod in informer cache",
 				"pod", pod.GetName(),
 				"namespace", pod.GetNamespace(),
 				"error", err)
-			// Cache empty result to avoid repeated failures, but preserve existing cache data
-			if !hasCache {
-				metadataCache[cacheKey] = PodMetadata{}
-			}
 		} else {
-			// Update cache with new data, preserving existing data if we didn't fetch it
-			if needLabels {
-				cachedMetadata.Labels = podMetadata.Labels
-			}
-			if needUID {
-				cachedMetadata.UID = podMetadata.UID
-			}
-			metadataCache[cacheKey] = cachedMetadata
-		}
-	}
+			uid = string(podObj.UID)
 
-	// Extract the data we need based on config flags
-	if p.Config.KubernetesEnablePodLabels {
-		labels = cachedMetadata.Labels
-	}
-	if p.Config.KubernetesEnablePodUID {
-		uid = cachedMetadata.UID
+			if p.Config.KubernetesEnablePodLabels {
+				for k, v := range podObj.Labels {
+					if !p.shouldIncludeLabel(k) {
+						continue
+					}
+					sanitizedKey := utils.SanitizeLabelName(k)
+					labels[sanitizedKey] = v
+				}
+			}
+		}
 	}
 
 	return PodInfo{
@@ -906,43 +908,6 @@ func (p *PodMapper) createPodInfo(pod *podresourcesapi.PodResources, container *
 		UID:       uid,
 		Labels:    labels,
 	}
-}
-
-// getPodMetadata fetches metadata (labels and UID) from a Kubernetes pod via the API server.
-// It sanitizes label names to ensure they are valid for Prometheus metrics and applies allowlist filtering.
-func (p *PodMapper) getPodMetadata(namespace, podName string) (*PodMetadata, error) {
-	if p.Client == nil {
-		return nil, fmt.Errorf("kubernetes client is not initialized")
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
-	defer cancel()
-
-	pod, err := p.Client.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
-	if err != nil {
-		return nil, err
-	}
-
-	// Sanitize and filter label names
-	sanitizedLabels := make(map[string]string)
-	for k, v := range pod.Labels {
-		// Apply allowlist filtering if configured
-		if !p.shouldIncludeLabel(k) {
-			slog.Debug("Filtering out pod label",
-				"label", k,
-				"pod", podName,
-				"namespace", namespace)
-			continue
-		}
-
-		sanitizedKey := utils.SanitizeLabelName(k)
-		sanitizedLabels[sanitizedKey] = v
-	}
-
-	return &PodMetadata{
-		UID:    string(pod.UID),
-		Labels: sanitizedLabels,
-	}, nil
 }
 
 // shouldIncludeLabel checks if a label should be included based on the allowlist regex patterns.

@@ -188,7 +188,7 @@ func NewApp(buildVersion ...string) *cli.App {
 		},
 		&cli.BoolFlag{
 			Name:    CLIKubernetesEnablePodUID,
-			Value:   false,
+			Value:   true,
 			Usage:   "Enable kubernetes pod UID in metrics. This parameter is effective only when the '--kubernetes' option is set to 'true'.",
 			EnvVars: []string{"DCGM_EXPORTER_KUBERNETES_ENABLE_POD_UID"},
 		},
