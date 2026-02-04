@@ -76,6 +76,23 @@ type Metric struct {
 	ParentType    dcgm.Field_Entity_Group `json:"parent_type"`
 }
 
+func (m Metric) Clone() Metric {
+	newM := m
+	if m.Labels != nil {
+		newM.Labels = make(map[string]string, len(m.Labels))
+		for k, v := range m.Labels {
+			newM.Labels[k] = v
+		}
+	}
+	if m.Attributes != nil {
+		newM.Attributes = make(map[string]string, len(m.Attributes))
+		for k, v := range m.Attributes {
+			newM.Attributes[k] = v
+		}
+	}
+	return newM
+}
+
 func (m Metric) GetIDOfType(idType appconfig.KubernetesGPUIDType) (string, error) {
 	// For MIG devices, return the MIG profile instead of
 	if m.MigProfile != "" {

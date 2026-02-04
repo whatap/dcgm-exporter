@@ -300,10 +300,7 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, _ deviceinfo.Pro
 
 				podInfos := deviceToPods[deviceID]
 				for _, pi := range podInfos {
-					metric, err := utils.DeepCopy(metrics[counter][j])
-					if err != nil {
-						return err
-					}
+					metric := metrics[counter][j].Clone()
 					if !p.Config.UseOldNamespace {
 						metric.Attributes[podAttribute] = pi.Name
 						metric.Attributes[namespaceAttribute] = pi.Namespace
@@ -376,10 +373,7 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, _ deviceinfo.Pro
 					podInfos := deviceToPodsDRA[deviceID]
 					if podInfos != nil {
 						for _, pi := range podInfos {
-							metric, err := utils.DeepCopy(metrics[counter][j])
-							if err != nil {
-								return err
-							}
+							metric := metrics[counter][j].Clone()
 							if !p.Config.UseOldNamespace {
 								metric.Attributes[podAttribute] = pi.Name
 								metric.Attributes[namespaceAttribute] = pi.Namespace

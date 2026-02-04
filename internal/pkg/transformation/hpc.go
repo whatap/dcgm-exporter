@@ -28,7 +28,6 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/utils"
 )
 
 type hpcMapper struct {
@@ -97,12 +96,7 @@ func (p *hpcMapper) Process(metrics collector.MetricsByCounter, _ deviceinfo.Pro
 			jobs, exists := gpuToJobMap[metric.GPU]
 			if exists && len(jobs) != 0 {
 				for _, job := range jobs {
-					modifiedMetric, err := utils.DeepCopy(metric)
-					if err != nil {
-						slog.Error(fmt.Sprintf("Can not create deepCopy for the value: %v", metric),
-							slog.String(logging.ErrorKey, err.Error()))
-						continue
-					}
+					modifiedMetric := metric.Clone()
 					if modifiedMetric.Attributes == nil {
 						slog.Debug("modifiedMetric.Attributes is nil, making an empty map")
 						modifiedMetric.Attributes = make(map[string]string)
