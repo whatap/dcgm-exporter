@@ -396,7 +396,11 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 				mockSystemInfo.EXPECT().GPUCount().Return(uint(1)).AnyTimes()
 				mockSystemInfo.EXPECT().GPU(uint(0)).Return(mockGPU).AnyTimes()
 
-				err := podMapper.Process(metrics, mockSystemInfo)
+				// Update cache manually to populate deviceToPod mapping
+				err := podMapper.updateCache(mockSystemInfo)
+				require.NoError(t, err)
+
+				err = podMapper.Process(metrics, mockSystemInfo)
 				require.NoError(t, err)
 				assert.Len(t, metrics, 1)
 
@@ -586,7 +590,11 @@ func TestProcessPodMapper_WithLabels(t *testing.T) {
 	}
 
 	// Process metrics
-	err := podMapper.Process(metrics, mockDeviceInfo)
+	// Update cache manually to populate deviceToPod mapping
+	err := podMapper.updateCache(mockDeviceInfo)
+	require.NoError(t, err)
+
+	err = podMapper.Process(metrics, mockDeviceInfo)
 	require.NoError(t, err)
 
 	// Verify that labels were added and sanitized correctly
@@ -812,7 +820,11 @@ func TestProcessPodMapper_WithUID(t *testing.T) {
 	}
 
 	// Process metrics
-	err := podMapper.Process(metrics, mockDeviceInfo)
+	// Update cache manually to populate deviceToPod mapping
+	err := podMapper.updateCache(mockDeviceInfo)
+	require.NoError(t, err)
+
+	err = podMapper.Process(metrics, mockDeviceInfo)
 	require.NoError(t, err)
 
 	// Verify that UIDs were added correctly
@@ -923,7 +935,11 @@ func TestProcessPodMapper_WithLabelsAndUID(t *testing.T) {
 	}
 
 	// Process metrics
-	err := podMapper.Process(metrics, mockDeviceInfo)
+	// Update cache manually to populate deviceToPod mapping
+	err := podMapper.updateCache(mockDeviceInfo)
+	require.NoError(t, err)
+
+	err = podMapper.Process(metrics, mockDeviceInfo)
 	require.NoError(t, err)
 
 	// Verify that both labels and UIDs were processed correctly
