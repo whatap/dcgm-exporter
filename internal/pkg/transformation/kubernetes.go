@@ -289,6 +289,12 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 					if pi.VGPU != "" {
 						metric.Attributes[vgpuAttribute] = pi.VGPU
 					}
+
+					// Robustness: ensure no overlap between Labels and Attributes
+					for k := range metric.Attributes {
+						delete(metric.Labels, k)
+					}
+
 					newmetrics = append(newmetrics, metric)
 				}
 			}
@@ -330,6 +336,11 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 							continue
 						}
 						metrics[counter][j].Labels[k] = v
+					}
+
+					// Robustness: ensure no overlap between Labels and Attributes
+					for k := range metrics[counter][j].Attributes {
+						delete(metrics[counter][j].Labels, k)
 					}
 				}
 			}
@@ -376,6 +387,12 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 									metric.Attributes[draMigDeviceUUID] = migInfo.MIGDeviceUUID
 								}
 							}
+
+							// Robustness: ensure no overlap between Labels and Attributes
+							for k := range metric.Attributes {
+								delete(metric.Labels, k)
+							}
+
 							newmetrics = append(newmetrics, metric)
 						}
 					} else {
