@@ -31,8 +31,6 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/prometheus/exporter-toolkit/web"
 
-	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
-
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/debug"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
@@ -128,11 +126,6 @@ func NewMetricsServer(
 	}
 
 	if podMapper != nil {
-		if wl, exists := deviceWatchListManager.EntityWatchList(dcgm.FE_GPU); exists {
-			podMapper.DeviceInfo = wl.DeviceInfo()
-		} else {
-			slog.Warn("Could not find FE_GPU watchlist to configure PodMapper")
-		}
 		go podMapper.Run()
 	}
 

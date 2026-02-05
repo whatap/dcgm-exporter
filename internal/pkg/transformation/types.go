@@ -48,11 +48,6 @@ type PodMapper struct {
 	podLister            corev1listers.PodLister
 	podInformerSynced    cache.InformerSynced
 	stopChan             chan struct{}
-	DeviceInfo           deviceinfo.Provider
-	mu                   sync.RWMutex
-	deviceToPods         map[string][]PodInfo
-	deviceToPod          map[string]PodInfo
-	deviceToPodsDRA      map[string][]PodInfo
 }
 
 // LabelFilterCache provides efficient caching for label filtering decisions

@@ -206,52 +206,28 @@ func (p *PodMapper) Run() {
 		}
 		slog.Info("Pod informer cache synced")
 	}
-
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-
-	if p.DeviceInfo != nil {
-		if err := p.updateCache(p.DeviceInfo); err != nil {
-			slog.Warn("Failed to update pod mapper cache", "error", err)
-		}
-	} else {
-		slog.Warn("DeviceInfo provider not set for PodMapper, skipping initial update")
-	}
-
-	for {
-		select {
-		case <-p.stopChan:
-			return
-		case <-ticker.C:
-			if p.DeviceInfo != nil {
-				if err := p.updateCache(p.DeviceInfo); err != nil {
-					slog.Warn("Failed to update pod mapper cache", "error", err)
-				}
-			}
-		}
-	}
 }
 
 func (p *PodMapper) Stop() {
 	close(p.stopChan)
 }
 
-func (p *PodMapper) updateCache(deviceInfo deviceinfo.Provider) error {
+func (p *PodMapper) getMappings(deviceInfo deviceinfo.Provider) (map[string][]PodInfo, map[string]PodInfo, map[string][]PodInfo, error) {
 	socketPath := p.Config.PodResourcesKubeletSocket
 	_, err := stdos.Stat(socketPath)
 	if stdos.IsNotExist(err) {
-		return nil
+		return nil, nil, nil, nil
 	}
 
 	c, cleanup, err := connectToServer(socketPath)
 	if err != nil {
-		return err
+		return nil, nil, nil, err
 	}
 	defer cleanup()
 
 	pods, err := p.listPods(c)
 	if err != nil {
-		return err
+		return nil, nil, nil, err
 	}
 
 	var deviceToPods map[string][]PodInfo
@@ -268,21 +244,15 @@ func (p *PodMapper) updateCache(deviceInfo deviceinfo.Provider) error {
 		deviceToPodsDRA = p.toDeviceToPodsDRA(pods)
 	}
 
-	p.mu.Lock()
-	p.deviceToPods = deviceToPods
-	p.deviceToPod = deviceToPod
-	p.deviceToPodsDRA = deviceToPodsDRA
-	p.mu.Unlock()
-
-	return nil
+	return deviceToPods, deviceToPod, deviceToPodsDRA, nil
 }
 
-func (p *PodMapper) Process(metrics collector.MetricsByCounter, _ deviceinfo.Provider) error {
-	p.mu.RLock()
-	deviceToPods := p.deviceToPods
-	deviceToPod := p.deviceToPod
-	deviceToPodsDRA := p.deviceToPodsDRA
-	p.mu.RUnlock()
+func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo deviceinfo.Provider) error {
+	deviceToPods, deviceToPod, deviceToPodsDRA, err := p.getMappings(deviceInfo)
+	if err != nil {
+		slog.Warn("Failed to get pod mappings", "error", err)
+		return nil // Don't fail the whole scrape, just skip enrichment
+	}
 
 	if p.Config.KubernetesVirtualGPUs {
 		if deviceToPods == nil {
