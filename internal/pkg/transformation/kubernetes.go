@@ -355,7 +355,12 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, _ deviceinfo.Pro
 					if p.Config.KubernetesEnablePodUID {
 						metrics[counter][j].Attributes[uidAttribute] = podInfo.UID
 					}
-					maps.Copy(metrics[counter][j].Labels, podInfo.Labels)
+					for k, v := range podInfo.Labels {
+						if _, ok := metrics[counter][j].Attributes[k]; ok {
+							continue
+						}
+						metrics[counter][j].Labels[k] = v
+					}
 				}
 			}
 		}
