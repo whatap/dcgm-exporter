@@ -185,7 +185,8 @@ var _ = Describe("dcgm-exporter-e2e-suite", func() {
 					metrics := metricFamily.GetMetric()
 					g.Expect(metrics).ShouldNot(BeNil())
 
-					// Each metric must have namespace, pod and container labels
+					// Check if at least one metric has the expected labels (handling multi-GPU nodes where only some GPUs have pods)
+					foundLabeledMetric := false
 					for _, metric := range metrics {
 						var actualLabels []string
 						for _, label := range metric.Label {
@@ -200,14 +201,17 @@ var _ = Describe("dcgm-exporter-e2e-suite", func() {
 								)
 							}
 						}
-						if len(actualLabels) != len(expectedLabels) {
-							fmt.Fprintf(GinkgoWriter, "Metric %s missing labels. Actual: %v. \nFull Metrics:\n%s\n",
-								ptr.Deref(metricFamily.Name, ""), metric.Label, string(metricsResponse))
+						if len(actualLabels) == len(expectedLabels) {
+							foundLabeledMetric = true
 						}
-						g.Expect(len(actualLabels)).Should(Equal(len(expectedLabels)),
-							"Metric %s doesn't contains expected labels: %v, actual labels: %v",
-							ptr.Deref(metricFamily.Name, ""), expectedLabels, metric.Label)
 					}
+					if !foundLabeledMetric {
+						fmt.Fprintf(GinkgoWriter, "Metric %s missing labels in all instances. \nFull Metrics:\n%s\n",
+							ptr.Deref(metricFamily.Name, ""), string(metricsResponse))
+					}
+					g.Expect(foundLabeledMetric).Should(BeTrue(),
+						"Metric %s doesn't contains expected labels: %v in any of its instances",
+						ptr.Deref(metricFamily.Name, ""), expectedLabels)
 				}
 			}).WithPolling(5 * time.Second).Within(2 * time.Minute).Should(Succeed())
 		})
