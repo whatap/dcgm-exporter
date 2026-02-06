@@ -200,6 +200,10 @@ var _ = Describe("dcgm-exporter-e2e-suite", func() {
 								)
 							}
 						}
+						if len(actualLabels) != len(expectedLabels) {
+							fmt.Fprintf(GinkgoWriter, "Metric %s missing labels. Actual: %v. \nFull Metrics:\n%s\n",
+								ptr.Deref(metricFamily.Name, ""), metric.Label, string(metricsResponse))
+						}
 						g.Expect(len(actualLabels)).Should(Equal(len(expectedLabels)),
 							"Metric %s doesn't contains expected labels: %v, actual labels: %v",
 							ptr.Deref(metricFamily.Name, ""), expectedLabels, metric.Label)
