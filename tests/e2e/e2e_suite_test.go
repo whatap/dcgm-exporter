@@ -391,6 +391,9 @@ var _ = Describe("dcgm-exporter-e2e-suite", func() {
 				// Parse metrics
 				var parser expfmt.TextParser
 				metricFamilies, err := parser.TextToMetricFamilies(bytes.NewReader(metricsResponse))
+				if err != nil {
+					fmt.Fprintf(GinkgoWriter, "Metrics parsing failed:\n%s\n", string(metricsResponse))
+				}
 				g.Expect(err).ShouldNot(HaveOccurred(), "Error parsing metrics")
 				g.Expect(metricFamilies).ShouldNot(BeEmpty(), "No metrics found")
 
