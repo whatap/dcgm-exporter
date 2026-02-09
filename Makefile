@@ -21,13 +21,14 @@ GOLANGCILINT_TIMEOUT ?= 10m
 IMAGE_TAG            ?= ""
 
 DCGM_VERSION   := $(NEW_DCGM_VERSION)
-GOLANG_VERSION := 1.24.12
+GOLANG_VERSION := 1.24.13
 VERSION        := $(NEW_EXPORTER_VERSION)
 FULL_VERSION   := $(DCGM_VERSION)-$(VERSION)
 OUTPUT         := type=oci,dest=/dev/null
 PLATFORMS      := linux/amd64,linux/arm64
 DOCKERCMD      := docker --debug buildx build
 MODULE         := github.com/NVIDIA/dcgm-exporter
+CONTAINER      ?= all
 
 .PHONY: all binary install check-format local
 all: ubuntu22.04 ubi9 distroless
@@ -53,9 +54,9 @@ push:
 
 local:
 ifeq ($(shell uname -p),aarch64)
-	$(MAKE) PLATFORMS=linux/arm64 OUTPUT=type=docker DOCKERCMD='docker build'
+	$(MAKE) $(CONTAINER) PLATFORMS=linux/arm64 OUTPUT=type=docker DOCKERCMD='docker build'
 else
-	$(MAKE) PLATFORMS=linux/amd64 OUTPUT=type=docker DOCKERCMD='docker build'
+	$(MAKE) $(CONTAINER) PLATFORMS=linux/amd64 OUTPUT=type=docker DOCKERCMD='docker build'
 endif
 
 ubi%: DOCKERFILE = docker/Dockerfile
