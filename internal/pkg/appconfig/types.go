@@ -75,6 +75,7 @@ type Config struct {
 	KubernetesEnableDRA              bool
 	DisableStartupValidate           bool
 	CollectProcessInfo               bool
+	ProcessCacheTTL                  int // TTL in seconds for GPU process info cache (0 = use default 30s)
 	EnableSelfHealing                bool
 	SelfHealingInterval              int
 }

@@ -105,6 +105,7 @@ const (
 	CLIKubernetesEnableDRA              = "kubernetes-enable-dra"
 	CLIDisableStartupValidate           = "disable-startup-validate"
 	CLICollectProcessInfo               = "collect-process-info"
+	CLIProcessCacheTTL                  = "process-cache-ttl"
 	CLIEnableSelfHealing                = "enable-self-healing"
 	CLISelfHealingInterval              = "self-healing-interval"
 )
@@ -366,6 +367,12 @@ func NewApp(buildVersion ...string) *cli.App {
 			Usage:   "Enable process info collection",
 			EnvVars: []string{"DCGM_EXPORTER_PROCESS"},
 		},
+		&cli.IntFlag{
+			Name:    CLIProcessCacheTTL,
+			Value:   30,
+			Usage:   "TTL in seconds for GPU process info cache. Higher values reduce /proc filesystem reads but delay process detection. (default: 30s)",
+			EnvVars: []string{"DCGM_EXPORTER_PROCESS_CACHE_TTL"},
+		},
 		&cli.BoolFlag{
 			Name:    CLIEnableSelfHealing,
 			Value:   true,
@@ -486,6 +493,10 @@ func startDCGMExporter(c *cli.Context) error {
 		err = nvmlprovider.Initialize()
 		if err != nil && !config.DisableStartupValidate {
 			return err // exit if we can't initialize nvml
+		}
+
+		if config.ProcessCacheTTL > 0 {
+			nvmlprovider.SetProcessCacheTTL(time.Duration(config.ProcessCacheTTL) * time.Second)
 		}
 
 		nvmlCleanup := nvmlprovider.Client().Cleanup
@@ -798,6 +809,7 @@ func contextToConfig(c *cli.Context) (*appconfig.Config, error) {
 		KubernetesEnableDRA:    c.Bool(CLIKubernetesEnableDRA),
 		DisableStartupValidate: c.Bool(CLIDisableStartupValidate),
 		CollectProcessInfo:     c.Bool(CLICollectProcessInfo),
+		ProcessCacheTTL:        c.Int(CLIProcessCacheTTL),
 		EnableSelfHealing:      c.Bool(CLIEnableSelfHealing),
 		SelfHealingInterval:    c.Int(CLISelfHealingInterval),
 	}, nil

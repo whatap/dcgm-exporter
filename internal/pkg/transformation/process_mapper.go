@@ -3,12 +3,31 @@ package transformation
 import (
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 )
+
+// processRelevantPrefixes defines metric field name prefixes that are meaningful per-process.
+// Only these metrics will be duplicated per process; other metrics (temperature, power, clock, etc.)
+// are device-level and kept as-is to avoid metric explosion.
+var processRelevantPrefixes = []string{
+	"DCGM_FI_DEV_GPU_UTIL",
+	"DCGM_FI_DEV_MEM_COPY_UTIL",
+	"DCGM_FI_DEV_ENC_UTIL",
+	"DCGM_FI_DEV_DEC_UTIL",
+	"DCGM_FI_DEV_FB_FREE",
+	"DCGM_FI_DEV_FB_USED",
+	"DCGM_FI_DEV_FB_RESERVED",
+	"DCGM_FI_PROF_GR_ENGINE_ACTIVE",
+	"DCGM_FI_PROF_SM_ACTIVE",
+	"DCGM_FI_PROF_SM_OCCUPANCY",
+	"DCGM_FI_PROF_PIPE_TENSOR_ACTIVE",
+	"DCGM_FI_PROF_DRAM_ACTIVE",
+}
 
 type ProcessMapper struct {
 	config *appconfig.Config
@@ -24,13 +43,22 @@ func (t *ProcessMapper) Name() string {
 	return "ProcessMapper"
 }
 
+// isProcessRelevant checks if a counter's field name should be duplicated per process.
+func isProcessRelevant(fieldName string) bool {
+	for _, prefix := range processRelevantPrefixes {
+		if strings.HasPrefix(fieldName, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func (t *ProcessMapper) Process(metrics collector.MetricsByCounter, _ deviceinfo.Provider) error {
 	if !t.config.CollectProcessInfo {
 		return nil
 	}
 
-	// 1. Get current process info from NVML
-	// We ignore error here to allow running without NVML process info if it fails transiently
+	// 1. Get current process info from NVML (cached within scrape interval)
 	processes, err := nvmlprovider.Client().GetAllGPUProcessInfo()
 	if err != nil {
 		return nil
@@ -48,9 +76,14 @@ func (t *ProcessMapper) Process(metrics collector.MetricsByCounter, _ deviceinfo
 		}
 	}
 
-	// 3. Iterate over metrics and enrich
+	// 3. Iterate over metrics and enrich only process-relevant counters
 	for counter, metricList := range metrics {
 		if counter.FieldName == "DCGM_FI_DEV_WEIGHTED_GPU_UTIL" {
+			continue
+		}
+
+		// Skip counters that are not meaningful per-process
+		if !isProcessRelevant(counter.FieldName) {
 			continue
 		}
 

@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/NVIDIA/go-nvml/pkg/nvml"
 )
@@ -61,11 +62,28 @@ func SetClient(n NVML) {
 	nvmlInterface = n
 }
 
+// SetProcessCacheTTL configures the TTL for GPU process info cache.
+// This controls how often /proc filesystem is scanned for process information.
+func SetProcessCacheTTL(d time.Duration) {
+	if p, ok := nvmlInterface.(*nvmlProvider); ok {
+		p.processCacheMu.Lock()
+		p.processCacheTTL = d
+		p.processCacheMu.Unlock()
+	}
+}
+
 // nvmlProvider implements NVML Interface
 type nvmlProvider struct {
 	initialized bool
 	migCache    map[string]*MIGDeviceInfo
 	lock        sync.RWMutex
+
+	// Process info cache
+	processCache    []GPUProcessInfo
+	processCacheErr error
+	processCacheAt  time.Time
+	processCacheTTL time.Duration
+	processCacheMu  sync.Mutex
 }
 
 func newNVMLProvider() (NVML, error) {
@@ -86,8 +104,9 @@ func newNVMLProvider() (NVML, error) {
 	}
 
 	return &nvmlProvider{
-		initialized: true,
-		migCache:    make(map[string]*MIGDeviceInfo),
+		initialized:     true,
+		migCache:        make(map[string]*MIGDeviceInfo),
+		processCacheTTL: 30 * time.Second,
 	}, nil
 }
 
@@ -205,12 +224,29 @@ func getMIGDeviceInfoForOldDriver(uuid string) (*MIGDeviceInfo, error) {
 	}, nil
 }
 
-// GetAllGPUProcessInfo returns information about all GPU processes across all devices
+// GetAllGPUProcessInfo returns information about all GPU processes across all devices.
+// Results are cached for processCacheTTL to avoid repeated /proc filesystem reads within a single scrape.
 func (n *nvmlProvider) GetAllGPUProcessInfo() ([]GPUProcessInfo, error) {
 	if err := n.preCheck(); err != nil {
 		return nil, err
 	}
 
+	n.processCacheMu.Lock()
+	defer n.processCacheMu.Unlock()
+
+	if time.Since(n.processCacheAt) < n.processCacheTTL && n.processCacheErr == nil {
+		return n.processCache, nil
+	}
+
+	processes, err := n.getAllGPUProcessInfoUncached()
+	n.processCache = processes
+	n.processCacheErr = err
+	n.processCacheAt = time.Now()
+
+	return processes, err
+}
+
+func (n *nvmlProvider) getAllGPUProcessInfoUncached() ([]GPUProcessInfo, error) {
 	var allProcesses []GPUProcessInfo
 
 	// Get device count
