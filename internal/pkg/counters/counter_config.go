@@ -27,12 +27,12 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/kubeclient"
 )
 
-func GetCounterSet(c *appconfig.Config) (*CounterSet, error) {
+func GetCounterSet(ctx context.Context, c *appconfig.Config) (*CounterSet, error) {
 	var (
 		err     error
 		records [][]string
@@ -42,12 +42,12 @@ func GetCounterSet(c *appconfig.Config) (*CounterSet, error) {
 
 	if c.ConfigMapData != undefinedConfigMapData {
 		var client kubernetes.Interface
-		client, err = getKubeClient()
+		client, err = kubeclient.GetKubeClient()
 		if err != nil {
 			slog.Error(err.Error())
 			os.Exit(1)
 		}
-		records, err = readConfigMap(client, c)
+		records, err = readConfigMap(ctx, client, c)
 		if err != nil {
 			slog.Error(err.Error())
 			os.Exit(1)
@@ -93,7 +93,6 @@ func ExtractCounters(records [][]string, c *appconfig.Config) (*CounterSet, erro
 	res := CounterSet{}
 
 	for i, record := range records {
-		useOld := false
 		if len(record) == 0 {
 			continue
 		}
@@ -108,9 +107,10 @@ func ExtractCounters(records [][]string, c *appconfig.Config) (*CounterSet, erro
 				record)
 		}
 
-		fieldID, ok := dcgm.DCGM_FI[record[0]]
-		oldFieldID, oldOk := dcgm.OLD_DCGM_FI[record[0]]
-		if !ok && !oldOk {
+		fieldID, ok := dcgm.GetFieldID(record[0])
+		isLegacyField := dcgm.IsLegacyField(record[0])
+
+		if !ok && !isLegacyField {
 
 			expField, err := IdentifyMetricType(record[0])
 			if err != nil {
@@ -127,35 +127,17 @@ func ExtractCounters(records [][]string, c *appconfig.Config) (*CounterSet, erro
 			}
 		}
 
-		if !ok && oldOk {
-			useOld = true
+		if !fieldIsSupported(uint(fieldID), c) {
+			slog.Warn(fmt.Sprintf("Skipping line %d ('%s'): metric not enabled", i, record[0]))
+			continue
 		}
 
-		if !useOld {
-			if !fieldIsSupported(uint(fieldID), c) {
-				slog.Warn(fmt.Sprintf("Skipping line %d ('%s'): metric not enabled", i, record[0]))
-				continue
-			}
-
-			if _, ok := promMetricType[record[1]]; !ok {
-				return nil, fmt.Errorf("could not find Prometheus metric type '%s'", record[1])
-			}
-
-			res.DCGMCounters = append(res.DCGMCounters,
-				Counter{FieldID: fieldID, FieldName: record[0], PromType: record[1], Help: record[2]})
-		} else {
-			if !fieldIsSupported(uint(oldFieldID), c) {
-				slog.Warn(fmt.Sprintf("Skipping line %d ('%s'): metric not enabled", i, record[0]))
-				continue
-			}
-
-			if _, ok := promMetricType[record[1]]; !ok {
-				return nil, fmt.Errorf("could not find Prometheus metric type '%s'", record[1])
-			}
-
-			res.DCGMCounters = append(res.DCGMCounters,
-				Counter{FieldID: oldFieldID, FieldName: record[0], PromType: record[1], Help: record[2]})
+		if _, ok := promMetricType[record[1]]; !ok {
+			return nil, fmt.Errorf("could not find Prometheus metric type '%s'", record[1])
 		}
+
+		res.DCGMCounters = append(res.DCGMCounters,
+			Counter{FieldID: fieldID, FieldName: record[0], PromType: record[1], Help: record[2]})
 	}
 
 	return &res, nil
@@ -181,14 +163,14 @@ func fieldIsSupported(fieldID uint, c *appconfig.Config) bool {
 	return false
 }
 
-func readConfigMap(kubeClient kubernetes.Interface, c *appconfig.Config) ([][]string, error) {
+func readConfigMap(ctx context.Context, kubeClient kubernetes.Interface, c *appconfig.Config) ([][]string, error) {
 	parts := strings.Split(c.ConfigMapData, ":")
 	if len(parts) != 2 {
 		return nil, fmt.Errorf("malformed configmap-data '%s'", c.ConfigMapData)
 	}
 
 	var cm *corev1.ConfigMap
-	cm, err := kubeClient.CoreV1().ConfigMaps(parts[0]).Get(context.TODO(), parts[1], metav1.GetOptions{})
+	cm, err := kubeClient.CoreV1().ConfigMaps(parts[0]).Get(ctx, parts[1], metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("could not retrieve ConfigMap '%s'; err: %w", c.ConfigMapData, err)
 	}
@@ -206,18 +188,4 @@ func readConfigMap(kubeClient kubernetes.Interface, c *appconfig.Config) ([][]st
 	}
 
 	return records, err
-}
-
-func getKubeClient() (kubernetes.Interface, error) {
-	config, err := rest.InClusterConfig()
-	if err != nil {
-		return nil, err
-	}
-
-	client, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		return nil, err
-	}
-
-	return client, err
 }

@@ -17,6 +17,8 @@
 package appconfig
 
 import (
+	"time"
+
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 )
 
@@ -28,32 +30,50 @@ type DeviceOptions struct {
 	MinorRange []int // The indices of each GPUInstance/NvLink to monitor, or -1 to monitor all
 }
 
+// DumpConfig controls file-based debugging dumps
+type DumpConfig struct {
+	Enabled     bool   `yaml:"enabled" json:"enabled"`         // Enable file-based dumps
+	Directory   string `yaml:"directory" json:"directory"`     // Directory to store dump files
+	Retention   int    `yaml:"retention" json:"retention"`     // Retention period in hours (0 = no cleanup)
+	Compression bool   `yaml:"compression" json:"compression"` // Use gzip compression for dump files
+}
+
 type Config struct {
-	CollectorsFile             string
-	Address                    string
-	CollectInterval            int
-	Kubernetes                 bool
-	KubernetesGPUIdType        KubernetesGPUIDType
-	CollectDCP                 bool
-	UseOldNamespace            bool
-	UseRemoteHE                bool
-	RemoteHEInfo               string
-	GPUDeviceOptions           DeviceOptions
-	SwitchDeviceOptions        DeviceOptions
-	CPUDeviceOptions           DeviceOptions
-	NoHostname                 bool
-	UseFakeGPUs                bool
-	ConfigMapData              string
-	MetricGroups               []dcgm.MetricGroup
-	WebSystemdSocket           bool
-	WebConfigFile              string
-	XIDCountWindowSize         int
-	ReplaceBlanksInModelName   bool
-	Debug                      bool
-	ClockEventsCountWindowSize int
-	EnableDCGMLog              bool
-	DCGMLogLevel               string
-	PodResourcesKubeletSocket  string
-	HPCJobMappingDir           string
-	NvidiaResourceNames        []string
+	CollectorsFile                   string
+	Address                          string
+	CollectInterval                  int
+	Kubernetes                       bool
+	KubernetesEnablePodLabels        bool
+	KubernetesEnablePodUID           bool
+	KubernetesGPUIdType              KubernetesGPUIDType
+	KubernetesPodLabelAllowlistRegex []string // Regex patterns for filtering pod labels
+	KubernetesPodLabelCacheSize      int      // Maximum number of label keys to cache (<=0 means default size)
+	CollectDCP                       bool
+	UseOldNamespace                  bool
+	UseRemoteHE                      bool
+	RemoteHEInfo                     string
+	GPUDeviceOptions                 DeviceOptions
+	SwitchDeviceOptions              DeviceOptions
+	CPUDeviceOptions                 DeviceOptions
+	NoHostname                       bool
+	UseFakeGPUs                      bool
+	ConfigMapData                    string
+	MetricGroups                     []dcgm.MetricGroup
+	WebSystemdSocket                 bool
+	WebConfigFile                    string
+	XIDCountWindowSize               int
+	ReplaceBlanksInModelName         bool
+	Debug                            bool
+	ClockEventsCountWindowSize       int
+	EnableDCGMLog                    bool
+	DCGMLogLevel                     string
+	PodResourcesKubeletSocket        string
+	HPCJobMappingDir                 string
+	NvidiaResourceNames              []string
+	KubernetesVirtualGPUs            bool
+	DumpConfig                       DumpConfig // Configuration for file-based dumps
+	KubernetesEnableDRA              bool
+	DisableStartupValidate           bool
+	EnableGPUBindUnbindWatch         bool          // Enable GPU bind/unbind event monitoring
+	GPUBindUnbindPollInterval        time.Duration // Poll interval for GPU bind/unbind events
 }

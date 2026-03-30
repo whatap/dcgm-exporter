@@ -21,4 +21,15 @@ const (
 
 	skipDCGMValue   = "SKIPPING DCGM VALUE"
 	FailedToConvert = "ERROR - FAILED TO CONVERT TO STRING"
+
+	LinkStatusOK                   = "OK"
+	LinkStatusChipsetNotSupported  = "ChipsetNotSupported"
+	LinkStatusGPUNotSupported      = "GPUNotSupported"
+	LinkStatusTopologyNotSupported = "TopologyNotSupported"
+	LinkStatusDisabledByRegKey     = "DisabledByRegKey"
+	LinkStatusNotSupported         = "NotSupported"
+	LinkStatusUnknown              = "Unknown"
+
+	PeerGPULabel    = "peer_gpu"
+	LinkStatusLabel = "link_status"
 )

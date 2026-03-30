@@ -21,19 +21,20 @@ GOLANGCILINT_TIMEOUT ?= 10m
 IMAGE_TAG            ?= ""
 
 DCGM_VERSION   := $(NEW_DCGM_VERSION)
-GOLANG_VERSION := 1.22.9
+GOLANG_VERSION := 1.24.13
 VERSION        := $(NEW_EXPORTER_VERSION)
 FULL_VERSION   := $(DCGM_VERSION)-$(VERSION)
 OUTPUT         := type=oci,dest=/dev/null
 PLATFORMS      := linux/amd64,linux/arm64
 DOCKERCMD      := docker --debug buildx build
 MODULE         := github.com/NVIDIA/dcgm-exporter
+CONTAINER      ?= all
 
 .PHONY: all binary install check-format local
-all: update-version ubuntu22.04 ubi9
+all: ubuntu22.04 ubi9 distroless
 
-binary: update-version
-	cd cmd/dcgm-exporter; $(GO) build -ldflags "-X main.BuildVersion=${DCGM_VERSION}-${VERSION}"
+binary:
+	cd cmd/dcgm-exporter; $(GO) build -trimpath -ldflags "-X main.BuildVersion=${DCGM_VERSION}-${VERSION}"
 
 test-main: generate
 	$(GO) test ./... -short
@@ -46,37 +47,47 @@ check-format:
 	test $$(gofmt -l pkg | tee /dev/stderr | wc -l) -eq 0
 	test $$(gofmt -l cmd | tee /dev/stderr | wc -l) -eq 0
 
-push: update-version
+push:
 	$(MAKE) ubuntu22.04 OUTPUT=type=registry
 	$(MAKE) ubi9 OUTPUT=type=registry
+	$(MAKE) distroless OUTPUT=type=registry
 
 local:
 ifeq ($(shell uname -p),aarch64)
-	$(MAKE) PLATFORMS=linux/arm64 OUTPUT=type=docker DOCKERCMD='docker build'
+	$(MAKE) $(CONTAINER) PLATFORMS=linux/arm64 OUTPUT=type=docker DOCKERCMD='docker build'
 else
-	$(MAKE) PLATFORMS=linux/amd64 OUTPUT=type=docker DOCKERCMD='docker build'
+	$(MAKE) $(CONTAINER) PLATFORMS=linux/amd64 OUTPUT=type=docker DOCKERCMD='docker build'
 endif
 
-ubi%: DOCKERFILE = docker/Dockerfile.ubi
+ubi%: DOCKERFILE = docker/Dockerfile
+ubi%: BUILD_TARGET = runtime-ubi
 ubi%: --docker-build-%
 	@
-ubi9: BASE_IMAGE = nvcr.io/nvidia/cuda:12.6.3-base-ubi9
+ubi9: BASE_IMAGE = nvcr.io/nvidia/cuda:13.1.1-base-ubi9
 ubi9: IMAGE_TAG = ubi9
 
-ubuntu%: DOCKERFILE = docker/Dockerfile.ubuntu
+ubuntu%: DOCKERFILE = docker/Dockerfile
+ubuntu%: BUILD_TARGET = runtime-ubuntu
 ubuntu%: --docker-build-%
 	@
-ubuntu22.04: BASE_IMAGE = nvcr.io/nvidia/cuda:12.6.3-base-ubuntu22.04
+ubuntu22.04: BASE_IMAGE = nvcr.io/nvidia/cuda:13.1.1-base-ubuntu22.04
 ubuntu22.04: IMAGE_TAG = ubuntu22.04
 
+distroless: DOCKERFILE = docker/Dockerfile
+distroless: BUILD_TARGET = runtime-distroless
+distroless: IMAGE_TAG = distroless
+distroless: --docker-build-distroless
 
 --docker-build-%:
-	@echo "Building for $@"
+	@echo "Building for $@ with target $(BUILD_TARGET)"
+	docker buildx inspect
 	DOCKER_BUILDKIT=1 \
 	$(DOCKERCMD) --pull \
 		--output $(OUTPUT) \
 		--progress=plain \
+		--no-cache \
 		--platform $(PLATFORMS) \
+		$(if $(BUILD_TARGET),--target $(BUILD_TARGET)) \
 		--build-arg BASEIMAGE="$(BASE_IMAGE)" \
 		--build-arg "GOLANG_VERSION=$(GOLANG_VERSION)" \
 		--build-arg "DCGM_VERSION=$(DCGM_VERSION)" \
@@ -125,12 +136,49 @@ test-integration: generate
 	go test -race -count=1 -timeout 5m -v $(TEST_ARGS) ./tests/integration/
 
 test-coverage:
-	sh scripts/test_coverage.sh
-	gocov convert tests.cov  | gocov report
+	@echo "Running unit tests..."
+	gotestsum --format testname -- \
+		$$(go list ./... | grep -v "/tests/e2e/") \
+		-count=1 -timeout 5m \
+		-covermode=count \
+		-coverprofile=unit_coverage.out \
+		--short
+	@echo "Running integration tests..."
+	gotestsum --format testname -- \
+		./internal/pkg/integration_test/... \
+		-count=1 -timeout 5m \
+		-covermode=count \
+		-coverpkg=./internal/pkg/... \
+		-coverprofile=integration_coverage.out \
+		--short
+	@echo "Merging coverage profiles..."
+	gocovmerge unit_coverage.out integration_coverage.out > combined_coverage.out.tmp
+	cat combined_coverage.out.tmp | grep -v "mock_" > tests.cov
+	rm combined_coverage.out.tmp integration_coverage.out unit_coverage.out
+	go tool cover -func=tests.cov
 
 .PHONY: lint
 lint:
-	golangci-lint run ./... --timeout $(GOLANGCILINT_TIMEOUT)  --new-from-rev=HEAD~1
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=1 GOGC=50 \
+		golangci-lint run ./... --timeout $(GOLANGCILINT_TIMEOUT) --new-from-rev=HEAD~1 --concurrency=2
+
+.PHONY: hadolint lint-dockerfiles
+hadolint lint-dockerfiles: ## Lint Dockerfiles with hadolint
+	@echo "Linting Dockerfiles with hadolint..."
+	@if command -v hadolint > /dev/null 2>&1; then \
+		hadolint docker/Dockerfile.ubuntu docker/Dockerfile.ubi docker/Dockerfile.distroless; \
+	elif docker inspect hadolint/hadolint > /dev/null 2>&1; then \
+		docker run --rm -i -v "$(CURDIR)/.hadolint.yaml:/.config/hadolint.yaml" \
+			hadolint/hadolint < docker/Dockerfile.ubuntu && \
+		docker run --rm -i -v "$(CURDIR)/.hadolint.yaml:/.config/hadolint.yaml" \
+			hadolint/hadolint < docker/Dockerfile.ubi && \
+		docker run --rm -i -v "$(CURDIR)/.hadolint.yaml:/.config/hadolint.yaml" \
+			hadolint/hadolint < docker/Dockerfile.distroless; \
+	else \
+		echo "Error: hadolint not found. Install it or run: docker pull hadolint/hadolint"; \
+		exit 1; \
+	fi
+	@echo "✓ All Dockerfiles passed hadolint checks"
 
 .PHONY: validate-modules
 validate-modules:
@@ -140,13 +188,17 @@ validate-modules:
 	go mod tidy
 	@git diff --exit-code -- go.sum go.mod
 
+.PHONY: validate
+validate: validate-modules hadolint check-fmt ## Run all validation checks
+	@echo "✓ All validation checks passed"
+
 .PHONY: tools
 tools: ## Install required tools and utilities
-	go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.55.2
-	go install github.com/axw/gocov/gocov@latest
-	go install golang.org/x/tools/cmd/goimports@latest
-	go install mvdan.cc/gofumpt@latest
-	go install github.com/wadey/gocovmerge@latest
+	curl -sSfL https://golangci-lint.run/install.sh | sh -s -- -b $(shell go env GOPATH)/bin v2.8.0
+	go install golang.org/x/tools/cmd/goimports@v0.41.0
+	go install mvdan.cc/gofumpt@v0.9.2
+	go install github.com/wadey/gocovmerge@v0.0.0-20160331181800-b5bfa59ec0ad
+	go install gotest.tools/gotestsum@v1.13.0
 
 fmt:
 	find . -name '*.go' | xargs gofumpt -l -w
@@ -184,3 +236,8 @@ update-versions: update-version
 # Generate code (Mocks)
 generate:
 	go generate ./...
+
+.PHONY: test-images
+test-images: ## Run Docker image validation tests (requires local images built with 'make local')
+	@echo "Running Docker image tests..."
+	cd tests/docker && $(MAKE) docker-test

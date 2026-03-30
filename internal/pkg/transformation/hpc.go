@@ -32,13 +32,22 @@ import (
 )
 
 type hpcMapper struct {
-	Config *appconfig.Config
+	Config           *appconfig.Config
+	missingDirectory bool
 }
 
 func newHPCMapper(c *appconfig.Config) *hpcMapper {
 	slog.Info(fmt.Sprintf("HPC job mapping is enabled and watch for the %q directory", c.HPCJobMappingDir))
+	_, err := os.Stat(c.HPCJobMappingDir)
+	missingDirectory := false
+	if err != nil && os.IsNotExist(err) {
+		missingDirectory = true
+		slog.Error(fmt.Sprintf("HPC job mapping file directory '%s' not found on initialization.",
+			c.HPCJobMappingDir), slog.String(logging.ErrorKey, err.Error()))
+	}
 	return &hpcMapper{
-		Config: c,
+		Config:           c,
+		missingDirectory: missingDirectory,
 	}
 }
 
@@ -49,9 +58,14 @@ func (p *hpcMapper) Name() string {
 func (p *hpcMapper) Process(metrics collector.MetricsByCounter, _ deviceinfo.Provider) error {
 	_, err := os.Stat(p.Config.HPCJobMappingDir)
 	if err != nil {
+		if os.IsNotExist(err) && p.missingDirectory {
+			return nil
+		}
 		slog.Error(fmt.Sprintf("Unable to access HPC job mapping file directory '%s' - directory not found. Ignoring.",
 			p.Config.HPCJobMappingDir), slog.String(logging.ErrorKey, err.Error()))
 		return nil
+	} else {
+		p.missingDirectory = false
 	}
 
 	gpuFiles, err := getGPUFiles(p.Config.HPCJobMappingDir)
@@ -81,13 +95,17 @@ func (p *hpcMapper) Process(metrics collector.MetricsByCounter, _ deviceinfo.Pro
 		var modifiedMetrics []collector.Metric
 		for _, metric := range metrics[counter] {
 			jobs, exists := gpuToJobMap[metric.GPU]
-			if exists {
+			if exists && len(jobs) != 0 {
 				for _, job := range jobs {
 					modifiedMetric, err := utils.DeepCopy(metric)
 					if err != nil {
 						slog.Error(fmt.Sprintf("Can not create deepCopy for the value: %v", metric),
 							slog.String(logging.ErrorKey, err.Error()))
 						continue
+					}
+					if modifiedMetric.Attributes == nil {
+						slog.Debug("modifiedMetric.Attributes is nil, making an empty map")
+						modifiedMetric.Attributes = make(map[string]string)
 					}
 					modifiedMetric.Attributes[hpcJobAttribute] = job
 					modifiedMetrics = append(modifiedMetrics, modifiedMetric)

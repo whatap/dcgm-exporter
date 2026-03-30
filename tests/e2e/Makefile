@@ -16,7 +16,7 @@ GO_CMD ?= go
 NAMESPACE ?= "dcgm-exporter"
 CHART ?= "./../../deployment/"
 IMAGE_REPOSITORY ?= "nvcr.io/nvidia/k8s/dcgm-exporter"
-IMAGE_TAG ?= "4.0.0-4.0.0-ubuntu22.04"
+IMAGE_TAG ?= "4.5.2-4.8.1-distroless"
 KUBECONFIG ?= "~/.kube/config"
 RUNTIME_CLASS ?= ""
 NO_CLEANUP ?= "false"
@@ -66,6 +66,11 @@ e2e-default:
 	@$(TEST_CMD) \
 		-arguments="{-f=/etc/dcgm-exporter/default-counters.csv}" \
 		--ginkgo.label-filter=default
+
+e2e-labels:
+	@$(TEST_CMD) \
+		-arguments="{-f=/etc/dcgm-exporter/default-counters.csv}" \
+		--ginkgo.label-filter=labels
 
 binary:
 	go test -c --tags="e2e" .

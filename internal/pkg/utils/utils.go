@@ -22,9 +22,13 @@ import (
 	"encoding/binary"
 	"encoding/gob"
 	"fmt"
+	"regexp"
 	"sync"
 	"time"
 )
+
+// invalidLabelCharRE is a regular expression that matches any character that is not a letter, digit, or underscore.
+var invalidLabelCharRE = regexp.MustCompile(`[^a-zA-Z0-9_]`)
 
 func WaitWithTimeout(wg *sync.WaitGroup, timeout time.Duration) error {
 	c := make(chan struct{})
@@ -32,10 +36,12 @@ func WaitWithTimeout(wg *sync.WaitGroup, timeout time.Duration) error {
 		defer close(c)
 		wg.Wait()
 	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 	select {
 	case <-c:
 		return nil
-	case <-time.After(timeout):
+	case <-timer.C:
 		return fmt.Errorf("timeout waiting for WaitGroup")
 	}
 }
@@ -82,4 +88,8 @@ func CleanupOnError(cleanups []func()) []func() {
 	}
 
 	return nil
+}
+
+func SanitizeLabelName(s string) string {
+	return invalidLabelCharRE.ReplaceAllString(s, "_")
 }

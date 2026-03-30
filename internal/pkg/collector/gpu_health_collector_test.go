@@ -61,7 +61,6 @@ func TestNewGPUHealthStatusCollector(t *testing.T) {
 			},
 			setDCGMproviderState: func(mockDCGMProvider *mockdcgm.MockDCGM) {
 				mockDCGMProvider.EXPECT().DestroyGroup(gomock.Any()).Return(errors.New("boom!")).Times(2)
-				mockDCGMProvider.EXPECT().FieldGroupDestroy(gomock.Any()).Return(errors.New("boom!"))
 			},
 			assertResult: func(c Collector, err error) {
 				assert.NotNil(t, c)
@@ -116,7 +115,8 @@ func setDefaultExpectationsForGPUHealthStatusCollectorMockDCGMProvider(t *testin
 	mockDCGMProvider.EXPECT().HealthSet(gomock.Any(), gomock.Eq(dcgm.DCGM_HEALTH_WATCH_ALL)).Return(nil).AnyTimes()
 	mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(1), nil).AnyTimes()
 	mockDCGMProvider.EXPECT().GetDeviceInfo(gomock.Eq(uint(0))).Return(dcgm.Device{}, nil).AnyTimes()
-	mockDCGMProvider.EXPECT().GetGpuInstanceHierarchy().Return(dcgm.MigHierarchy_v2{}, nil).AnyTimes()
+	mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(dcgm.MigHierarchy_v2{}, nil).AnyTimes()
+	mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil).AnyTimes()
 	mockDCGMProvider.EXPECT().CreateGroup(gomock.Cond(func(x any) bool {
 		return strings.HasPrefix(x.(string), "gpu-collector-group")
 	})).Return(dcgm.GroupHandle{}, nil).AnyTimes()

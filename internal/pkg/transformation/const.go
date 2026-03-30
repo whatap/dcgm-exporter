@@ -21,10 +21,25 @@ const (
 	podAttribute       = "pod"
 	namespaceAttribute = "namespace"
 	containerAttribute = "container"
+	uidAttribute       = "pod_uid"
+	vgpuAttribute      = "vgpu"
 
 	hpcJobAttribute = "hpc_job"
 
 	oldPodAttribute       = "pod_name"
 	oldNamespaceAttribute = "pod_namespace"
 	oldContainerAttribute = "container_name"
+	draClaimName          = "dra_claim_name"
+	draClaimNamespace     = "dra_claim_namespace"
+	draDriverName         = "dra_driver_name"
+	draPoolName           = "dra_pool_name"
+	draDeviceName         = "dra_device_name"
+
+	draMigProfile    = "dra_mig_profile"
+	draMigDeviceUUID = "dra_mig_device_uuid"
+
+	DRAGPUDriverName = "gpu.nvidia.com"
+
+	metricGPUUtil = "DCGM_FI_DEV_GPU_UTIL"
+	metricFBUsed  = "DCGM_FI_DEV_FB_USED"
 )

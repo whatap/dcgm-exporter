@@ -76,7 +76,11 @@ func (cf *collectorFactory) NewCollectors() []EntityCollectorTuple {
 			if dcgmCollector, err := cf.enableDCGMCollector(entityWatchList); err != nil {
 				slog.Error(fmt.Sprintf("DCGM collector for entity type '%s' cannot be initialized; err: %v",
 					entityType.String(), err))
-				os.Exit(1)
+				// with config.DisableStartupValidate unset, this is fatal
+				if !cf.config.DisableStartupValidate {
+					os.Exit(1)
+				}
+				// continue to next entity type if config.DisableStartupValidate is set
 			} else {
 				entityCollectorTuples = append(entityCollectorTuples, EntityCollectorTuple{
 					entity:    entityType,
@@ -122,6 +126,20 @@ func (cf *collectorFactory) NewCollectors() []EntityCollectorTuple {
 		}
 	}
 
+	if IsDCGMExpP2PStatusEnabled(cf.counterSet.ExporterCounters) {
+		newCollector, err := cf.enableExpCollector(counters.DCGMExpP2PStatus)
+
+		if err != nil {
+			slog.Error(fmt.Sprintf("collector '%s' cannot be initialized; err: %v", counters.DCGMExpP2PStatus, err))
+			os.Exit(1)
+		}
+
+		entityCollectorTuples = append(entityCollectorTuples, EntityCollectorTuple{
+			entity:    dcgm.FE_GPU,
+			collector: newCollector,
+		})
+	}
+
 	return entityCollectorTuples
 }
 
@@ -155,6 +173,12 @@ func (cf *collectorFactory) enableExpCollector(expCollectorName string) (Collect
 			item)
 	case counters.DCGMExpGPUHealthStatus:
 		newCollector, err = NewGPUHealthStatusCollector(cf.counterSet.ExporterCounters,
+			cf.hostname,
+			cf.config,
+			item,
+		)
+	case counters.DCGMExpP2PStatus:
+		newCollector, err = NewP2PStatusCollector(cf.counterSet.ExporterCounters,
 			cf.hostname,
 			cf.config,
 			item,

@@ -118,7 +118,7 @@ func TestGetters(t *testing.T) {
 	}
 
 	assert.Equal(t, uint(len(fakeDevices)), deviceInfo.GPUCount(), "GPU count mismatch")
-	assert.Equal(t, fakeDeviceInfo[:], deviceInfo.GPUs(), "GPUs mismatch")
+	assert.Equal(t, fakeDeviceInfo[:deviceInfo.GPUCount()], deviceInfo.GPUs(), "GPUs mismatch")
 	assert.Equal(t, fakeDeviceInfo[0], deviceInfo.GPU(uint(0)), "GPU mismatch")
 	assert.Equal(t, fakeSwitches, deviceInfo.Switches(), "Switches mismatch")
 	assert.Equal(t, fakeSwitches[1], deviceInfo.Switch(uint(1)), "Switch mismatch")
@@ -166,7 +166,8 @@ func TestInitialize(t *testing.T) {
 
 				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(1), nil)
 				mockDCGMProvider.EXPECT().GetDeviceInfo(gomock.Any()).Return(fakeDevices[0], nil)
-				mockDCGMProvider.EXPECT().GetGpuInstanceHierarchy().Return(mockHierarchy, nil)
+				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
+				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(mockHierarchy, nil)
 			},
 			expectedOutput: func() *Info {
 				return &Info{
@@ -276,10 +277,15 @@ func TestInitialize(t *testing.T) {
 			sOpts:      appconfig.DeviceOptions{Flex: true},
 			entityType: dcgm.FE_LINK,
 			mockCalls: func() {
+				// Mock calls for initializeNvSwitchInfo
 				mockDCGMProvider.EXPECT().GetEntityGroupEntities(gomock.Any()).Return([]uint{1}, nil)
 				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{
 					{ParentId: uint(1), ParentType: dcgm.FE_SWITCH, Index: uint(1)},
 				}, nil)
+				// Mock calls for initializeGPUInfo (called for FE_LINK)
+				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(0), nil)
+				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
+				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(dcgm.MigHierarchy_v2{Count: 0}, nil)
 			},
 			expectedOutput: func() *Info {
 				return &Info{
@@ -328,26 +334,48 @@ func TestInitialize(t *testing.T) {
 			sOpts:      appconfig.DeviceOptions{Flex: true},
 			entityType: dcgm.FE_LINK,
 			mockCalls: func() {
+				// Mock calls for initializeNvSwitchInfo (will return error but is ignored for FE_LINK)
 				mockDCGMProvider.EXPECT().GetEntityGroupEntities(dcgm.FE_SWITCH).Return([]uint{uint(0)},
 					fmt.Errorf("some error"))
+				// Mock calls for initializeGPUInfo (called for FE_LINK even if initializeNvSwitchInfo fails)
+				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(0), nil)
+				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
+				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(dcgm.MigHierarchy_v2{Count: 0}, nil)
 			},
-			wantErr: true,
+			expectedOutput: func() *Info {
+				return &Info{
+					gpuCount: 0,
+					gpus:     [dcgm.MAX_NUM_DEVICES]GPUInfo{},
+					switches: []SwitchInfo{},
+					cpus:     nil,
+					gOpt:     appconfig.DeviceOptions{},
+					sOpt:     appconfig.DeviceOptions{Flex: true},
+					cOpt:     appconfig.DeviceOptions{},
+					infoType: dcgm.FE_LINK,
+				}
+			},
+			assertions: func(expected, actual *Info) {
+				assert.Equal(t, expected.gpuCount, actual.gpuCount, "GPU count mismatch")
+				assert.Equal(t, len(expected.switches), len(actual.switches), "Switches length mismatch")
+				assert.Equal(t, expected.infoType, actual.infoType, "Info type mismatch")
+			},
+			wantErr: false,
 		},
 		{
 			name:       "initialize CPUs",
 			cOpts:      appconfig.DeviceOptions{Flex: true},
 			entityType: dcgm.FE_CPU,
 			mockCalls: func() {
-				mockCPUHierarchy := dcgm.CpuHierarchy_v1{
-					NumCpus: 1,
-					Cpus: [dcgm.MAX_NUM_CPUS]dcgm.CpuHierarchyCpu_v1{
+				mockCPUHierarchy := dcgm.CPUHierarchy_v1{
+					NumCPUs: 1,
+					CPUs: [dcgm.MAX_NUM_CPUS]dcgm.CPUHierarchyCPU_v1{
 						{
-							CpuId:      0,
+							CPUID:      0,
 							OwnedCores: []uint64{1, 2, 8},
 						},
 					},
 				}
-				mockDCGMProvider.EXPECT().GetCpuHierarchy().Return(mockCPUHierarchy, nil)
+				mockDCGMProvider.EXPECT().GetCPUHierarchy().Return(mockCPUHierarchy, nil)
 			},
 			expectedOutput: func() *Info {
 				return &Info{
@@ -386,72 +414,11 @@ func TestInitialize(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:       "Initialize CPU error",
-			cOpts:      appconfig.DeviceOptions{Flex: true},
-			entityType: dcgm.FE_CPU,
-			mockCalls: func() {
-				mockDCGMProvider.EXPECT().GetCpuHierarchy().Return(dcgm.CpuHierarchy_v1{}, fmt.Errorf("some error"))
-			},
-			wantErr: true,
-		},
-		{
-			name:       "Initialize CPU Cores",
-			cOpts:      appconfig.DeviceOptions{Flex: true},
-			entityType: dcgm.FE_CPU_CORE,
-			mockCalls: func() {
-				mockCPUHierarchy := dcgm.CpuHierarchy_v1{
-					NumCpus: 1,
-					Cpus: [dcgm.MAX_NUM_CPUS]dcgm.CpuHierarchyCpu_v1{
-						{
-							CpuId:      0,
-							OwnedCores: []uint64{1, 2, 8},
-						},
-					},
-				}
-				mockDCGMProvider.EXPECT().GetCpuHierarchy().Return(mockCPUHierarchy, nil)
-			},
-			expectedOutput: func() *Info {
-				return &Info{
-					gpuCount: 0,
-					gpus:     [dcgm.MAX_NUM_DEVICES]GPUInfo{},
-					switches: nil,
-					cpus: []CPUInfo{
-						{
-							EntityId: uint(1),
-							Cores:    []uint{0, 65, 131},
-						},
-					},
-					gOpt:     appconfig.DeviceOptions{},
-					sOpt:     appconfig.DeviceOptions{},
-					cOpt:     appconfig.DeviceOptions{Flex: true},
-					infoType: dcgm.FE_CPU_CORE,
-				}
-			},
-			assertions: func(expected, actual *Info) {
-				assert.Equal(t, len(expected.cpus), len(actual.cpus),
-					"CPU length mismatch")
-
-				assert.Equal(t, expected.cpus[0].EntityId, expected.cpus[0].EntityId,
-					"CPU Entity ID mismatch")
-
-				assert.Equal(t, len(expected.cpus[0].Cores), len(actual.cpus[0].Cores),
-					"CPU Core length mismatch")
-
-				assert.True(t, slices.Equal(expected.cpus[0].Cores, actual.cpus[0].Cores),
-					"CPU Cores mismatch")
-
-				assert.Equal(t, expected.cOpt, actual.cOpt, "CPU options mismatch")
-
-				assert.Equal(t, expected.infoType, actual.infoType, "CPU info type mismatch")
-			},
-			wantErr: false,
-		},
-		{
 			name:       "Initialize CPU Cores error",
 			cOpts:      appconfig.DeviceOptions{Flex: true},
 			entityType: dcgm.FE_CPU_CORE,
 			mockCalls: func() {
-				mockDCGMProvider.EXPECT().GetCpuHierarchy().Return(dcgm.CpuHierarchy_v1{}, fmt.Errorf("some error"))
+				mockDCGMProvider.EXPECT().GetCPUHierarchy().Return(dcgm.CPUHierarchy_v1{}, fmt.Errorf("some error"))
 			},
 			wantErr: true,
 		},
@@ -509,7 +476,8 @@ func TestInitializeGPUInfo(t *testing.T) {
 			},
 			mockCalls: func() {
 				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(0), nil)
-				mockDCGMProvider.EXPECT().GetGpuInstanceHierarchy().Return(dcgm.MigHierarchy_v2{
+				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
+				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(dcgm.MigHierarchy_v2{
 					Count: 0,
 				}, nil)
 			},
@@ -540,7 +508,8 @@ func TestInitializeGPUInfo(t *testing.T) {
 
 				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(1), nil)
 				mockDCGMProvider.EXPECT().GetDeviceInfo(gomock.Any()).Return(fakeDevices[0], nil)
-				mockDCGMProvider.EXPECT().GetGpuInstanceHierarchy().Return(mockHierarchy, nil)
+				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
+				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(mockHierarchy, nil)
 			},
 			expectedOutput: map[uint]GPUInfo{
 				0: {
@@ -562,7 +531,8 @@ func TestInitializeGPUInfo(t *testing.T) {
 				mockHierarchy.EntityList[0] = fakeGPUs[1]
 
 				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(len(fakeDevices)), nil)
-				mockDCGMProvider.EXPECT().GetGpuInstanceHierarchy().Return(mockHierarchy, nil)
+				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
+				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(mockHierarchy, nil)
 
 				for i := 0; i < len(fakeDevices); i++ {
 					mockDCGMProvider.EXPECT().GetDeviceInfo(uint(i)).Return(fakeDevices[i], nil)
@@ -594,7 +564,8 @@ func TestInitializeGPUInfo(t *testing.T) {
 			mockCalls: func() {
 				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(1), nil)
 				mockDCGMProvider.EXPECT().GetDeviceInfo(gomock.Any()).Return(fakeDevices[0], nil)
-				mockDCGMProvider.EXPECT().GetGpuInstanceHierarchy().Return(dcgm.MigHierarchy_v2{},
+				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
+				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(dcgm.MigHierarchy_v2{},
 					fmt.Errorf("some error"))
 			},
 			expectedOutput: map[uint]GPUInfo{},
@@ -622,13 +593,14 @@ func TestInitializeGPUInfo(t *testing.T) {
 				}
 
 				mockEntitiesResult := []dcgm.FieldValue_v2{
-					{EntityId: mockEntitiesInput[0].EntityId},
-					{EntityId: mockEntitiesInput[1].EntityId},
+					{EntityID: mockEntitiesInput[0].EntityId},
+					{EntityID: mockEntitiesInput[1].EntityId},
 				}
 
 				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(1), nil)
 				mockDCGMProvider.EXPECT().GetDeviceInfo(gomock.Any()).Return(fakeDevices[0], nil)
-				mockDCGMProvider.EXPECT().GetGpuInstanceHierarchy().Return(mockHierarchy, nil)
+				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
+				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(mockHierarchy, nil)
 				mockDCGMProvider.EXPECT().EntitiesGetLatestValues(mockEntitiesInput, gomock.Any(),
 					gomock.Any()).Return(mockEntitiesResult, nil)
 				mockDCGMProvider.EXPECT().Fv2_String(mockEntitiesResult[0]).Return("instance_profile_0")
@@ -683,13 +655,14 @@ func TestInitializeGPUInfo(t *testing.T) {
 				}
 
 				mockEntitiesResult := []dcgm.FieldValue_v2{
-					{EntityId: mockEntitiesInput[0].EntityId},
-					{EntityId: mockEntitiesInput[1].EntityId},
-					{EntityId: mockEntitiesInput[2].EntityId},
+					{EntityID: mockEntitiesInput[0].EntityId},
+					{EntityID: mockEntitiesInput[1].EntityId},
+					{EntityID: mockEntitiesInput[2].EntityId},
 				}
 
 				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(len(fakeDevices)), nil)
-				mockDCGMProvider.EXPECT().GetGpuInstanceHierarchy().Return(fakeMigHierarchy, nil)
+				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
+				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(fakeMigHierarchy, nil)
 				mockDCGMProvider.EXPECT().EntitiesGetLatestValues(mockEntitiesInput, gomock.Any(),
 					gomock.Any()).Return(mockEntitiesResult, nil)
 				mockDCGMProvider.EXPECT().Fv2_String(mockEntitiesResult[0]).Return("instance_profile_0")
@@ -760,7 +733,8 @@ func TestInitializeGPUInfo(t *testing.T) {
 			},
 			mockCalls: func() {
 				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(len(fakeDevices)), nil)
-				mockDCGMProvider.EXPECT().GetGpuInstanceHierarchy().Return(fakeMigHierarchy, nil)
+				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
+				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(fakeMigHierarchy, nil)
 				mockDCGMProvider.EXPECT().EntitiesGetLatestValues(gomock.Any(), gomock.Any(),
 					gomock.Any()).Return([]dcgm.FieldValue_v2{}, fmt.Errorf("some error"))
 
@@ -883,13 +857,14 @@ func TestInitializeGPUInfo(t *testing.T) {
 				}
 
 				mockEntitiesResult := []dcgm.FieldValue_v2{
-					{EntityId: mockEntitiesInput[0].EntityId},
-					{EntityId: mockEntitiesInput[1].EntityId},
-					{EntityId: mockEntitiesInput[2].EntityId},
+					{EntityID: mockEntitiesInput[0].EntityId},
+					{EntityID: mockEntitiesInput[1].EntityId},
+					{EntityID: mockEntitiesInput[2].EntityId},
 				}
 
 				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(len(fakeDevices)), nil)
-				mockDCGMProvider.EXPECT().GetGpuInstanceHierarchy().Return(fakeMigHierarchy, nil)
+				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
+				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(fakeMigHierarchy, nil)
 				mockDCGMProvider.EXPECT().EntitiesGetLatestValues(mockEntitiesInput, gomock.Any(),
 					gomock.Any()).Return(mockEntitiesResult, nil)
 				mockDCGMProvider.EXPECT().Fv2_String(mockEntitiesResult[0]).Return("instance_profile_0")
@@ -1114,13 +1089,14 @@ func TestInitializeGPUInfo(t *testing.T) {
 				}
 
 				mockEntitiesResult := []dcgm.FieldValue_v2{
-					{EntityId: mockEntitiesInput[0].EntityId},
-					{EntityId: mockEntitiesInput[1].EntityId},
-					{EntityId: mockEntitiesInput[2].EntityId},
+					{EntityID: mockEntitiesInput[0].EntityId},
+					{EntityID: mockEntitiesInput[1].EntityId},
+					{EntityID: mockEntitiesInput[2].EntityId},
 				}
 
 				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(len(fakeDevices)), nil)
-				mockDCGMProvider.EXPECT().GetGpuInstanceHierarchy().Return(fakeMigHierarchy, nil)
+				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
+				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(fakeMigHierarchy, nil)
 				mockDCGMProvider.EXPECT().EntitiesGetLatestValues(mockEntitiesInput, gomock.Any(),
 					gomock.Any()).Return(mockEntitiesResult, nil)
 				mockDCGMProvider.EXPECT().Fv2_String(mockEntitiesResult[0]).Return("instance_profile_0")
@@ -1199,13 +1175,14 @@ func TestInitializeGPUInfo(t *testing.T) {
 				}
 
 				mockEntitiesResult := []dcgm.FieldValue_v2{
-					{EntityId: mockEntitiesInput[0].EntityId},
-					{EntityId: mockEntitiesInput[1].EntityId},
-					{EntityId: mockEntitiesInput[2].EntityId},
+					{EntityID: mockEntitiesInput[0].EntityId},
+					{EntityID: mockEntitiesInput[1].EntityId},
+					{EntityID: mockEntitiesInput[2].EntityId},
 				}
 
 				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(len(fakeDevices)), nil)
-				mockDCGMProvider.EXPECT().GetGpuInstanceHierarchy().Return(fakeMigHierarchy, nil)
+				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
+				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(fakeMigHierarchy, nil)
 				mockDCGMProvider.EXPECT().EntitiesGetLatestValues(mockEntitiesInput, gomock.Any(),
 					gomock.Any()).Return(mockEntitiesResult, nil)
 				mockDCGMProvider.EXPECT().Fv2_String(mockEntitiesResult[0]).Return("instance_profile_0")
@@ -1284,13 +1261,14 @@ func TestInitializeGPUInfo(t *testing.T) {
 				}
 
 				mockEntitiesResult := []dcgm.FieldValue_v2{
-					{EntityId: mockEntitiesInput[0].EntityId},
-					{EntityId: mockEntitiesInput[1].EntityId},
-					{EntityId: mockEntitiesInput[2].EntityId},
+					{EntityID: mockEntitiesInput[0].EntityId},
+					{EntityID: mockEntitiesInput[1].EntityId},
+					{EntityID: mockEntitiesInput[2].EntityId},
 				}
 
 				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(len(fakeDevices)), nil)
-				mockDCGMProvider.EXPECT().GetGpuInstanceHierarchy().Return(fakeMigHierarchy, nil)
+				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
+				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(fakeMigHierarchy, nil)
 				mockDCGMProvider.EXPECT().EntitiesGetLatestValues(mockEntitiesInput, gomock.Any(),
 					gomock.Any()).Return(mockEntitiesResult, nil)
 				mockDCGMProvider.EXPECT().Fv2_String(mockEntitiesResult[0]).Return("instance_profile_0")
@@ -1318,13 +1296,14 @@ func TestInitializeGPUInfo(t *testing.T) {
 				}
 
 				mockEntitiesResult := []dcgm.FieldValue_v2{
-					{EntityId: mockEntitiesInput[0].EntityId},
-					{EntityId: mockEntitiesInput[1].EntityId},
-					{EntityId: mockEntitiesInput[2].EntityId},
+					{EntityID: mockEntitiesInput[0].EntityId},
+					{EntityID: mockEntitiesInput[1].EntityId},
+					{EntityID: mockEntitiesInput[2].EntityId},
 				}
 
 				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(len(fakeDevices)), nil)
-				mockDCGMProvider.EXPECT().GetGpuInstanceHierarchy().Return(fakeMigHierarchy, nil)
+				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
+				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(fakeMigHierarchy, nil)
 				mockDCGMProvider.EXPECT().EntitiesGetLatestValues(mockEntitiesInput, gomock.Any(),
 					gomock.Any()).Return(mockEntitiesResult, nil)
 				mockDCGMProvider.EXPECT().Fv2_String(mockEntitiesResult[0]).Return("instance_profile_0")
@@ -1406,10 +1385,10 @@ func TestInitializeCPUInfo(t *testing.T) {
 				Flex: true,
 			},
 			mockCalls: func() {
-				mockCPUHierarchy := dcgm.CpuHierarchy_v1{
-					NumCpus: 0,
+				mockCPUHierarchy := dcgm.CPUHierarchy_v1{
+					NumCPUs: 0,
 				}
-				mockDCGMProvider.EXPECT().GetCpuHierarchy().Return(mockCPUHierarchy, nil)
+				mockDCGMProvider.EXPECT().GetCPUHierarchy().Return(mockCPUHierarchy, nil)
 			},
 			wantErr: true,
 		},
@@ -1419,16 +1398,16 @@ func TestInitializeCPUInfo(t *testing.T) {
 				Flex: true,
 			},
 			mockCalls: func() {
-				mockCPUHierarchy := dcgm.CpuHierarchy_v1{
-					NumCpus: 1,
-					Cpus: [dcgm.MAX_NUM_CPUS]dcgm.CpuHierarchyCpu_v1{
+				mockCPUHierarchy := dcgm.CPUHierarchy_v1{
+					NumCPUs: 1,
+					CPUs: [dcgm.MAX_NUM_CPUS]dcgm.CPUHierarchyCPU_v1{
 						{
-							CpuId:      0,
+							CPUID:      0,
 							OwnedCores: []uint64{1, 2, 8},
 						},
 					},
 				}
-				mockDCGMProvider.EXPECT().GetCpuHierarchy().Return(mockCPUHierarchy, nil)
+				mockDCGMProvider.EXPECT().GetCPUHierarchy().Return(mockCPUHierarchy, nil)
 			},
 			expectedCPUCoreOutput: map[uint][]int{0: {0, 65, 131}},
 			wantErr:               false,
@@ -1439,16 +1418,16 @@ func TestInitializeCPUInfo(t *testing.T) {
 				Flex: true,
 			},
 			mockCalls: func() {
-				mockCPUHierarchy := dcgm.CpuHierarchy_v1{
-					NumCpus: 1,
-					Cpus: [dcgm.MAX_NUM_CPUS]dcgm.CpuHierarchyCpu_v1{
+				mockCPUHierarchy := dcgm.CPUHierarchy_v1{
+					NumCPUs: 1,
+					CPUs: [dcgm.MAX_NUM_CPUS]dcgm.CPUHierarchyCPU_v1{
 						{
-							CpuId:      0,
+							CPUID:      0,
 							OwnedCores: []uint64{1, 2, 8},
 						},
 					},
 				}
-				mockDCGMProvider.EXPECT().GetCpuHierarchy().Return(mockCPUHierarchy, fmt.Errorf("some error"))
+				mockDCGMProvider.EXPECT().GetCPUHierarchy().Return(mockCPUHierarchy, fmt.Errorf("some error"))
 			},
 			wantErr: true,
 		},
@@ -1458,20 +1437,20 @@ func TestInitializeCPUInfo(t *testing.T) {
 				Flex: true,
 			},
 			mockCalls: func() {
-				mockCPUHierarchy := dcgm.CpuHierarchy_v1{
-					NumCpus: 2,
-					Cpus: [dcgm.MAX_NUM_CPUS]dcgm.CpuHierarchyCpu_v1{
+				mockCPUHierarchy := dcgm.CPUHierarchy_v1{
+					NumCPUs: 2,
+					CPUs: [dcgm.MAX_NUM_CPUS]dcgm.CPUHierarchyCPU_v1{
 						{
-							CpuId:      0,
+							CPUID:      0,
 							OwnedCores: []uint64{1, 2, 8},
 						},
 						{
-							CpuId:      1,
+							CPUID:      1,
 							OwnedCores: []uint64{8, 16, 32},
 						},
 					},
 				}
-				mockDCGMProvider.EXPECT().GetCpuHierarchy().Return(mockCPUHierarchy, nil)
+				mockDCGMProvider.EXPECT().GetCPUHierarchy().Return(mockCPUHierarchy, nil)
 			},
 			expectedCPUCoreOutput: map[uint][]int{0: {0, 65, 131}, 1: {3, 68, 133}},
 			wantErr:               false,
@@ -1484,31 +1463,31 @@ func TestInitializeCPUInfo(t *testing.T) {
 				MinorRange: []int{1, 2, 4, 8, 16, 32, 64, 128, 256},
 			},
 			mockCalls: func() {
-				mockCPUHierarchy := dcgm.CpuHierarchy_v1{
-					NumCpus: 5,
-					Cpus: [dcgm.MAX_NUM_CPUS]dcgm.CpuHierarchyCpu_v1{
+				mockCPUHierarchy := dcgm.CPUHierarchy_v1{
+					NumCPUs: 5,
+					CPUs: [dcgm.MAX_NUM_CPUS]dcgm.CPUHierarchyCPU_v1{
 						{
-							CpuId:      0,
+							CPUID:      0,
 							OwnedCores: []uint64{0b10110},
 						},
 						{
-							CpuId:      1,
+							CPUID:      1,
 							OwnedCores: []uint64{0x100010100},
 						},
 						{
-							CpuId:      2,
+							CPUID:      2,
 							OwnedCores: []uint64{0x0, 0x1, 0x1, 0x0},
 						},
 						{
-							CpuId:      3,
+							CPUID:      3,
 							OwnedCores: []uint64{0x0, 0x0, 0x0, 0x0, 0x1},
 						},
 						{
-							CpuId: 4,
+							CPUID: 4,
 						},
 					},
 				}
-				mockDCGMProvider.EXPECT().GetCpuHierarchy().Return(mockCPUHierarchy, nil)
+				mockDCGMProvider.EXPECT().GetCPUHierarchy().Return(mockCPUHierarchy, nil)
 			},
 			expectedCPUCoreOutput: map[uint][]int{0: {1, 2, 4}, 1: {8, 16, 32}, 2: {64, 128}, 3: {256}, 4: {}},
 			wantErr:               false,
@@ -1521,31 +1500,31 @@ func TestInitializeCPUInfo(t *testing.T) {
 				MinorRange: []int{1, 2, 4, 8, 16, 32, 64, 128},
 			},
 			mockCalls: func() {
-				mockCPUHierarchy := dcgm.CpuHierarchy_v1{
-					NumCpus: 5,
-					Cpus: [dcgm.MAX_NUM_CPUS]dcgm.CpuHierarchyCpu_v1{
+				mockCPUHierarchy := dcgm.CPUHierarchy_v1{
+					NumCPUs: 5,
+					CPUs: [dcgm.MAX_NUM_CPUS]dcgm.CPUHierarchyCPU_v1{
 						{
-							CpuId:      0,
+							CPUID:      0,
 							OwnedCores: []uint64{0b10110},
 						},
 						{
-							CpuId:      1,
+							CPUID:      1,
 							OwnedCores: []uint64{0x100010100},
 						},
 						{
-							CpuId:      2,
+							CPUID:      2,
 							OwnedCores: []uint64{0x0, 0x1, 0x1},
 						},
 						{
-							CpuId:      3,
+							CPUID:      3,
 							OwnedCores: []uint64{0x0, 0x0, 0x0, 0x0, 0x1},
 						},
 						{
-							CpuId: 4,
+							CPUID: 4,
 						},
 					},
 				}
-				mockDCGMProvider.EXPECT().GetCpuHierarchy().Return(mockCPUHierarchy, nil)
+				mockDCGMProvider.EXPECT().GetCPUHierarchy().Return(mockCPUHierarchy, nil)
 			},
 			expectedCPUCoreOutput: map[uint][]int{0: {1, 2, 4}, 1: {8, 16, 32}, 2: {64, 128}},
 			wantErr:               false,
@@ -1558,31 +1537,31 @@ func TestInitializeCPUInfo(t *testing.T) {
 				MinorRange: []int{1, 2, 4, 8, 16, 32, 64},
 			},
 			mockCalls: func() {
-				mockCPUHierarchy := dcgm.CpuHierarchy_v1{
-					NumCpus: 5,
-					Cpus: [dcgm.MAX_NUM_CPUS]dcgm.CpuHierarchyCpu_v1{
+				mockCPUHierarchy := dcgm.CPUHierarchy_v1{
+					NumCPUs: 5,
+					CPUs: [dcgm.MAX_NUM_CPUS]dcgm.CPUHierarchyCPU_v1{
 						{
-							CpuId:      0,
+							CPUID:      0,
 							OwnedCores: []uint64{0b10110},
 						},
 						{
-							CpuId:      1,
+							CPUID:      1,
 							OwnedCores: []uint64{0x100010100},
 						},
 						{
-							CpuId:      2,
+							CPUID:      2,
 							OwnedCores: []uint64{0x0, 0x1, 0x1, 0x1},
 						},
 						{
-							CpuId:      3,
+							CPUID:      3,
 							OwnedCores: []uint64{0x0, 0x0, 0x0, 0x0, 0x1},
 						},
 						{
-							CpuId: 4,
+							CPUID: 4,
 						},
 					},
 				}
-				mockDCGMProvider.EXPECT().GetCpuHierarchy().Return(mockCPUHierarchy, nil)
+				mockDCGMProvider.EXPECT().GetCPUHierarchy().Return(mockCPUHierarchy, nil)
 			},
 			expectedCPUCoreOutput: map[uint][]int{0: {1, 2, 4}, 1: {8, 16, 32}, 2: {64}},
 			wantErr:               false,
@@ -1595,31 +1574,31 @@ func TestInitializeCPUInfo(t *testing.T) {
 				MinorRange: []int{1, 2, 4, 8, 16, 32, 64, 128, 256},
 			},
 			mockCalls: func() {
-				mockCPUHierarchy := dcgm.CpuHierarchy_v1{
-					NumCpus: 5,
-					Cpus: [dcgm.MAX_NUM_CPUS]dcgm.CpuHierarchyCpu_v1{
+				mockCPUHierarchy := dcgm.CPUHierarchy_v1{
+					NumCPUs: 5,
+					CPUs: [dcgm.MAX_NUM_CPUS]dcgm.CPUHierarchyCPU_v1{
 						{
-							CpuId:      0,
+							CPUID:      0,
 							OwnedCores: []uint64{0b10110},
 						},
 						{
-							CpuId:      1,
+							CPUID:      1,
 							OwnedCores: []uint64{0x100010100},
 						},
 						{
-							CpuId:      2,
+							CPUID:      2,
 							OwnedCores: []uint64{0x0, 0x1, 0x1, 0x0},
 						},
 						{
-							CpuId:      3,
+							CPUID:      3,
 							OwnedCores: []uint64{0x0, 0x0, 0x0, 0x0, 0x1},
 						},
 						{
-							CpuId: 4,
+							CPUID: 4,
 						},
 					},
 				}
-				mockDCGMProvider.EXPECT().GetCpuHierarchy().Return(mockCPUHierarchy, nil)
+				mockDCGMProvider.EXPECT().GetCPUHierarchy().Return(mockCPUHierarchy, nil)
 			},
 			expectedCPUCoreOutput: map[uint][]int{0: {1, 2, 4}, 1: {8, 16, 32}, 2: {64, 128}, 3: {256}, 4: {}},
 			wantErr:               false,
@@ -1632,31 +1611,31 @@ func TestInitializeCPUInfo(t *testing.T) {
 				MinorRange: []int{-1},
 			},
 			mockCalls: func() {
-				mockCPUHierarchy := dcgm.CpuHierarchy_v1{
-					NumCpus: 5,
-					Cpus: [dcgm.MAX_NUM_CPUS]dcgm.CpuHierarchyCpu_v1{
+				mockCPUHierarchy := dcgm.CPUHierarchy_v1{
+					NumCPUs: 5,
+					CPUs: [dcgm.MAX_NUM_CPUS]dcgm.CPUHierarchyCPU_v1{
 						{
-							CpuId:      0,
+							CPUID:      0,
 							OwnedCores: []uint64{0b10110},
 						},
 						{
-							CpuId:      1,
+							CPUID:      1,
 							OwnedCores: []uint64{0x100010100},
 						},
 						{
-							CpuId:      2,
+							CPUID:      2,
 							OwnedCores: []uint64{0x0, 0x1, 0x1, 0x0},
 						},
 						{
-							CpuId:      3,
+							CPUID:      3,
 							OwnedCores: []uint64{0x0, 0x0, 0x0, 0x0, 0x1},
 						},
 						{
-							CpuId: 4,
+							CPUID: 4,
 						},
 					},
 				}
-				mockDCGMProvider.EXPECT().GetCpuHierarchy().Return(mockCPUHierarchy, nil)
+				mockDCGMProvider.EXPECT().GetCPUHierarchy().Return(mockCPUHierarchy, nil)
 			},
 			expectedCPUCoreOutput: map[uint][]int{0: {1, 2, 4}, 1: {8, 16, 32}, 2: {64, 128}, 3: {256}, 4: {}},
 			wantErr:               false,
@@ -1669,31 +1648,31 @@ func TestInitializeCPUInfo(t *testing.T) {
 				MinorRange: []int{1, 2, 4, 8, 16, 32, 64, 128, 256},
 			},
 			mockCalls: func() {
-				mockCPUHierarchy := dcgm.CpuHierarchy_v1{
-					NumCpus: 5,
-					Cpus: [dcgm.MAX_NUM_CPUS]dcgm.CpuHierarchyCpu_v1{
+				mockCPUHierarchy := dcgm.CPUHierarchy_v1{
+					NumCPUs: 5,
+					CPUs: [dcgm.MAX_NUM_CPUS]dcgm.CPUHierarchyCPU_v1{
 						{
-							CpuId:      0,
+							CPUID:      0,
 							OwnedCores: []uint64{0b10110},
 						},
 						{
-							CpuId:      1,
+							CPUID:      1,
 							OwnedCores: []uint64{0x100010100},
 						},
 						{
-							CpuId:      2,
+							CPUID:      2,
 							OwnedCores: []uint64{0x0, 0x1, 0x1, 0x0},
 						},
 						{
-							CpuId:      3,
+							CPUID:      3,
 							OwnedCores: []uint64{0x0, 0x0, 0x0, 0x0, 0x1},
 						},
 						{
-							CpuId: 4,
+							CPUID: 4,
 						},
 					},
 				}
-				mockDCGMProvider.EXPECT().GetCpuHierarchy().Return(mockCPUHierarchy, nil)
+				mockDCGMProvider.EXPECT().GetCPUHierarchy().Return(mockCPUHierarchy, nil)
 			},
 			wantErr: true,
 		},
@@ -1705,31 +1684,31 @@ func TestInitializeCPUInfo(t *testing.T) {
 				MinorRange: []int{1, 2, 4, 8, 16, 32, 64, 128, 256, 1024},
 			},
 			mockCalls: func() {
-				mockCPUHierarchy := dcgm.CpuHierarchy_v1{
-					NumCpus: 5,
-					Cpus: [dcgm.MAX_NUM_CPUS]dcgm.CpuHierarchyCpu_v1{
+				mockCPUHierarchy := dcgm.CPUHierarchy_v1{
+					NumCPUs: 5,
+					CPUs: [dcgm.MAX_NUM_CPUS]dcgm.CPUHierarchyCPU_v1{
 						{
-							CpuId:      0,
+							CPUID:      0,
 							OwnedCores: []uint64{0b10110},
 						},
 						{
-							CpuId:      1,
+							CPUID:      1,
 							OwnedCores: []uint64{0x100010100},
 						},
 						{
-							CpuId:      2,
+							CPUID:      2,
 							OwnedCores: []uint64{0x0, 0x1, 0x1, 0x0},
 						},
 						{
-							CpuId:      3,
+							CPUID:      3,
 							OwnedCores: []uint64{0x0, 0x0, 0x0, 0x0, 0x1},
 						},
 						{
-							CpuId: 4,
+							CPUID: 4,
 						},
 					},
 				}
-				mockDCGMProvider.EXPECT().GetCpuHierarchy().Return(mockCPUHierarchy, nil)
+				mockDCGMProvider.EXPECT().GetCPUHierarchy().Return(mockCPUHierarchy, nil)
 			},
 			wantErr: true,
 		},
@@ -2476,16 +2455,18 @@ func TestIsCoreWatched(t *testing.T) {
 
 func TestSetMigProfileNames(t *testing.T) {
 	config := &appconfig.Config{
-		UseRemoteHE: false,
+		EnableDCGMLog: true,
+		DCGMLogLevel:  "DEBUG",
 	}
-	dcgmprovider.Initialize(config)
+	dcgmprovider.SmartDCGMInit(t, config)
 	defer dcgmprovider.Client().Cleanup()
 
 	tests := []struct {
 		name       string
 		deviceInfo Info
-		values     []dcgm.FieldValue_v2
-		valid      bool
+
+		values []dcgm.FieldValue_v2
+		valid  bool
 	}{
 		{
 			name: "MIG profile found",
@@ -2501,7 +2482,7 @@ func TestSetMigProfileNames(t *testing.T) {
 			},
 			values: []dcgm.FieldValue_v2{
 				{
-					EntityId:    1,
+					EntityID:    1,
 					FieldType:   dcgm.DCGM_FT_STRING,
 					StringValue: &fakeProfileName,
 				},
@@ -2532,7 +2513,7 @@ func TestSetMigProfileNames(t *testing.T) {
 			},
 			values: []dcgm.FieldValue_v2{
 				{
-					EntityId:    2,
+					EntityID:    2,
 					FieldType:   dcgm.DCGM_FT_STRING,
 					StringValue: &fakeProfileName,
 				},
@@ -2563,12 +2544,12 @@ func TestSetMigProfileNames(t *testing.T) {
 			},
 			values: []dcgm.FieldValue_v2{
 				{
-					EntityId:    2,
+					EntityID:    2,
 					FieldType:   dcgm.DCGM_FT_STRING,
 					StringValue: &fakeProfileName,
 				},
 				{
-					EntityId:    3,
+					EntityID:    3,
 					FieldType:   dcgm.DCGM_FT_STRING,
 					StringValue: &fakeProfileName,
 				},
@@ -2589,7 +2570,7 @@ func TestSetMigProfileNames(t *testing.T) {
 			},
 			values: []dcgm.FieldValue_v2{
 				{
-					EntityId:    2,
+					EntityID:    2,
 					FieldType:   dcgm.DCGM_FT_STRING,
 					StringValue: &fakeProfileName,
 				},
@@ -2610,7 +2591,7 @@ func TestSetMigProfileNames(t *testing.T) {
 			},
 			values: []dcgm.FieldValue_v2{
 				{
-					EntityId:    1,
+					EntityID:    1,
 					FieldType:   dcgm.DCGM_FT_BINARY,
 					StringValue: &fakeProfileName,
 					Value:       [4096]byte{'1', '2', '3'},

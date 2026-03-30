@@ -19,24 +19,28 @@ package server
 import (
 	"net/http"
 	"sync"
+	"sync/atomic"
 
 	"github.com/prometheus/exporter-toolkit/web"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/debug"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/registry"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/transformation"
 )
 
 type MetricsServer struct {
-	sync.Mutex
+	sync.RWMutex
 
 	server                 *http.Server
 	webConfig              *web.FlagConfig
 	metrics                string
-	metricsChan            chan string
-	registry               *registry.Registry
+	registry               atomic.Pointer[registry.Registry]
 	config                 *appconfig.Config
 	transformations        []transformation.Transform
 	deviceWatchListManager devicewatchlistmanager.Manager
+	fileDumper             *debug.FileDumper
+
+	reloadInProgress atomic.Bool
 }

@@ -36,8 +36,10 @@
                 "-f",
                 "./etc/default-counters.csv",
                 "--debug",
+                "--dump-enabled",
                 "-r",
-                "localhost:5555"
+                "localhost:5555",
+                "--enable-gpu-bind-unbind-watch"
             ]
         }
     ]

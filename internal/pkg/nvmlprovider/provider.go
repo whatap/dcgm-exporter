@@ -35,8 +35,13 @@ type MIGDeviceInfo struct {
 var nvmlInterface NVML
 
 // Initialize sets up the Singleton NVML interface.
-func Initialize() {
-	nvmlInterface = newNVMLProvider()
+func Initialize() error {
+	var err error
+	nvmlInterface, err = newNVMLProvider()
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // reset clears the current NVML interface instance.
@@ -45,7 +50,12 @@ func reset() {
 }
 
 // Client retrieves the current NVML interface instance.
+// Returns a non-initialized provider if NVML was never initialized.
 func Client() NVML {
+	if nvmlInterface == nil {
+		// Return a non-initialized provider that will safely return errors
+		return nvmlProvider{initialized: false}
+	}
 	return nvmlInterface
 }
 
@@ -59,11 +69,11 @@ type nvmlProvider struct {
 	initialized bool
 }
 
-func newNVMLProvider() NVML {
+func newNVMLProvider() (NVML, error) {
 	// Check if a NVML client already exists and return it if so.
 	if Client() != nil && Client().(nvmlProvider).initialized {
 		slog.Info("NVML already initialized.")
-		return Client()
+		return Client(), nil
 	}
 
 	slog.Info("Attempting to initialize NVML library.")
@@ -71,15 +81,15 @@ func newNVMLProvider() NVML {
 	if ret != nvml.SUCCESS {
 		err := errors.New(nvml.ErrorString(ret))
 		slog.Error(fmt.Sprintf("Cannot init NVML library; err: %v", err))
-		return nvmlProvider{initialized: false}
+		return nvmlProvider{initialized: false}, err
 	}
 
-	return nvmlProvider{initialized: true}
+	return nvmlProvider{initialized: true}, nil
 }
 
 func (n nvmlProvider) preCheck() error {
 	if !n.initialized {
-		return fmt.Errorf("NVML library not initialized")
+		return errors.New("NVML library not initialized")
 	}
 
 	return nil
@@ -88,8 +98,7 @@ func (n nvmlProvider) preCheck() error {
 // GetMIGDeviceInfoByID returns information about MIG DEVICE by ID
 func (n nvmlProvider) GetMIGDeviceInfoByID(uuid string) (*MIGDeviceInfo, error) {
 	if err := n.preCheck(); err != nil {
-		slog.Error(fmt.Sprintf("failed to get MIG Device Info; err: %v", err))
-		return nil, err
+		return nil, fmt.Errorf("NVML not initialized (may need to enable Kubernetes mode): %w", err)
 	}
 
 	device, ret := nvml.DeviceGetHandleByUUID(uuid)
@@ -161,9 +170,120 @@ func getMIGDeviceInfoForOldDriver(uuid string) (*MIGDeviceInfo, error) {
 	}, nil
 }
 
+// GetDeviceProcessMemory returns memory usage for compute processes running on the GPU
+func (n nvmlProvider) GetDeviceProcessMemory(gpuUUID string) (map[uint32]uint64, error) {
+	if err := n.preCheck(); err != nil {
+		return nil, fmt.Errorf("failed to get device process memory: %w", err)
+	}
+
+	device, ret := nvml.DeviceGetHandleByUUID(gpuUUID)
+	if ret != nvml.SUCCESS {
+		return nil, fmt.Errorf("failed to get device handle for UUID %s: %s", gpuUUID, nvml.ErrorString(ret))
+	}
+
+	processes, ret := device.GetComputeRunningProcesses()
+	if ret != nvml.SUCCESS && ret != nvml.ERROR_NOT_SUPPORTED {
+		return nil, fmt.Errorf("failed to get compute running processes: %s", nvml.ErrorString(ret))
+	}
+
+	result := make(map[uint32]uint64, len(processes))
+	for _, p := range processes {
+		result[p.Pid] = p.UsedGpuMemory
+	}
+
+	return result, nil
+}
+
+// GetDeviceProcessUtilization returns SM utilization for processes running on the GPU
+func (n nvmlProvider) GetDeviceProcessUtilization(gpuUUID string) (map[uint32]uint32, error) {
+	if err := n.preCheck(); err != nil {
+		return nil, fmt.Errorf("failed to get device process utilization: %w", err)
+	}
+
+	device, ret := nvml.DeviceGetHandleByUUID(gpuUUID)
+	if ret != nvml.SUCCESS {
+		return nil, fmt.Errorf("failed to get device handle for UUID %s: %s", gpuUUID, nvml.ErrorString(ret))
+	}
+
+	samples, ret := device.GetProcessUtilization(0)
+	if ret != nvml.SUCCESS {
+		if ret == nvml.ERROR_NOT_SUPPORTED {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get process utilization: %s", nvml.ErrorString(ret))
+	}
+
+	result := make(map[uint32]uint32, len(samples))
+	for _, s := range samples {
+		result[s.Pid] = s.SmUtil
+	}
+
+	return result, nil
+}
+
+// GetAllMIGDevicesProcessMemory returns per-process memory usage for all MIG instances on a GPU.
+// Returns map[gpuInstanceID (MIG instance)]map[PID]memoryBytes.
+func (n nvmlProvider) GetAllMIGDevicesProcessMemory(parentGPUUUID string) (map[uint]map[uint32]uint64, error) {
+	if err := n.preCheck(); err != nil {
+		return nil, fmt.Errorf("failed to get MIG device process memory: %w", err)
+	}
+
+	parentDevice, ret := nvml.DeviceGetHandleByUUID(parentGPUUUID)
+	if ret != nvml.SUCCESS {
+		return nil, fmt.Errorf("failed to get parent device handle for UUID %s: %s", parentGPUUUID, nvml.ErrorString(ret))
+	}
+
+	migCount, ret := parentDevice.GetMaxMigDeviceCount()
+	if ret != nvml.SUCCESS {
+		return nil, fmt.Errorf("failed to get MIG device count for UUID %s: %s", parentGPUUUID, nvml.ErrorString(ret))
+	}
+
+	result := make(map[uint]map[uint32]uint64)
+
+	for i := 0; i < migCount; i++ {
+		migDevice, ret := parentDevice.GetMigDeviceHandleByIndex(i)
+		if ret == nvml.ERROR_NOT_FOUND || ret == nvml.ERROR_INVALID_ARGUMENT {
+			continue
+		}
+		if ret != nvml.SUCCESS {
+			slog.Debug("Failed to get MIG device handle", "index", i, "error", nvml.ErrorString(ret))
+			continue
+		}
+
+		giID, ret := migDevice.GetGpuInstanceId()
+		if ret != nvml.SUCCESS {
+			slog.Debug("Failed to get GPU instance ID for MIG device", "index", i, "error", nvml.ErrorString(ret))
+			continue
+		}
+
+		processes, ret := migDevice.GetComputeRunningProcesses()
+		if ret != nvml.SUCCESS && ret != nvml.ERROR_NOT_SUPPORTED {
+			slog.Debug("Failed to get running processes for MIG device", "gpuInstanceID", giID, "error", nvml.ErrorString(ret))
+			continue
+		}
+
+		pidToMemory := make(map[uint32]uint64, len(processes))
+		for _, p := range processes {
+			pidToMemory[p.Pid] = p.UsedGpuMemory
+		}
+		result[uint(giID)] = pidToMemory
+	}
+
+	return result, nil
+}
+
 // Cleanup performs cleanup operations for the NVML provider
 func (n nvmlProvider) Cleanup() {
-	if err := n.preCheck(); err == nil {
-		reset()
+	if !n.initialized {
+		slog.Info("NVML not initialized, skipping cleanup")
+		return
 	}
+
+	slog.Info("Attempting to shutdown NVML library")
+	ret := nvml.Shutdown()
+	if ret != nvml.SUCCESS {
+		slog.Error(fmt.Sprintf("Failed to shutdown NVML library: %v", nvml.ErrorString(ret)))
+	}
+
+	reset()
 }

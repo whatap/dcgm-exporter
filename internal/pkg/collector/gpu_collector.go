@@ -28,7 +28,6 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicemonitoring"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 )
@@ -93,7 +92,7 @@ func (c *DCGMCollector) GetMetrics() (MetricsByCounter, error) {
 		var vals []dcgm.FieldValue_v1
 		var err error
 		if mi.Entity.EntityGroupId == dcgm.FE_LINK {
-			vals, err = dcgmprovider.Client().LinkGetLatestValues(mi.Entity.EntityId, mi.ParentId,
+			vals, err = dcgmprovider.Client().LinkGetLatestValues(mi.Entity.EntityId, mi.ParentType, mi.ParentId,
 				c.deviceWatchList.DeviceFields())
 		} else {
 			vals, err = dcgmprovider.Client().EntityGetLatestValues(mi.Entity.EntityGroupId, mi.Entity.EntityId,
@@ -101,7 +100,7 @@ func (c *DCGMCollector) GetMetrics() (MetricsByCounter, error) {
 		}
 
 		if err != nil {
-			if derr, ok := err.(*dcgm.DcgmError); ok {
+			if derr, ok := err.(*dcgm.Error); ok {
 				if derr.Code == dcgm.DCGM_ST_CONNECTION_NOT_VALID {
 					slog.Error("Could not retrieve metrics: " + err.Error())
 					os.Exit(1)
@@ -112,7 +111,13 @@ func (c *DCGMCollector) GetMetrics() (MetricsByCounter, error) {
 
 		// InstanceInfo will be nil for GPUs
 		switch c.deviceWatchList.DeviceInfo().InfoType() {
-		case dcgm.FE_SWITCH, dcgm.FE_LINK:
+		case dcgm.FE_LINK:
+			if mi.ParentType == dcgm.FE_SWITCH {
+				toSwitchMetric(metrics, vals, c.counters, mi, c.useOldNamespace, c.hostname)
+			} else {
+				toGPUNvLinkMetric(metrics, vals, c.counters, mi, c.hostname)
+			}
+		case dcgm.FE_SWITCH:
 			toSwitchMetric(metrics, vals, c.counters, mi, c.useOldNamespace, c.hostname)
 		case dcgm.FE_CPU, dcgm.FE_CPU_CORE:
 			toCPUMetric(metrics, vals, c.counters, mi, c.useOldNamespace, c.hostname)
@@ -120,8 +125,7 @@ func (c *DCGMCollector) GetMetrics() (MetricsByCounter, error) {
 			toMetric(metrics,
 				vals,
 				c.counters,
-				mi.DeviceInfo,
-				mi.InstanceInfo,
+				mi,
 				c.useOldNamespace,
 				c.hostname,
 				c.replaceBlanksInModelName)
@@ -131,9 +135,9 @@ func (c *DCGMCollector) GetMetrics() (MetricsByCounter, error) {
 	return metrics, nil
 }
 
-func findCounterField(c []counters.Counter, fieldID uint) (counters.Counter, error) {
+func findCounterField(c []counters.Counter, fieldID dcgm.Short) (counters.Counter, error) {
 	for i := 0; i < len(c); i++ {
-		if uint(c[i].FieldID) == fieldID {
+		if c[i].FieldID == fieldID {
 			return c[i], nil
 		}
 	}
@@ -151,7 +155,7 @@ func toSwitchMetric(
 		v := toString(val)
 		// Filter out counters with no value and ignored fields for this entity
 
-		counter, err := findCounterField(c, val.FieldId)
+		counter, err := findCounterField(c, val.FieldID)
 		if err != nil {
 			continue
 		}
@@ -169,17 +173,15 @@ func toSwitchMetric(
 			continue
 		} else {
 			m = Metric{
-				Counter:      counter,
-				Value:        v,
-				UUID:         uuid,
-				GPU:          fmt.Sprintf("%d", mi.Entity.EntityId),
-				GPUUUID:      "",
-				GPUDevice:    fmt.Sprintf("nvswitch%d", mi.ParentId),
-				GPUModelName: "",
-				GPUPCIBusID:  "",
-				Hostname:     hostname,
-				Labels:       labels,
-				Attributes:   nil,
+				Counter:    counter,
+				Value:      v,
+				UUID:       uuid,
+				NvLink:     fmt.Sprintf("%d", mi.Entity.EntityId),
+				NvSwitch:   fmt.Sprintf("nvswitch%d", mi.ParentId),
+				Hostname:   hostname,
+				Labels:     labels,
+				Attributes: nil,
+				ParentType: mi.ParentType,
 			}
 		}
 
@@ -197,7 +199,7 @@ func toCPUMetric(
 		v := toString(val)
 		// Filter out counters with no value and ignored fields for this entity
 
-		counter, err := findCounterField(c, val.FieldId)
+		counter, err := findCounterField(c, val.FieldID)
 		if err != nil {
 			continue
 		}
@@ -226,6 +228,57 @@ func toCPUMetric(
 				Hostname:     hostname,
 				Labels:       labels,
 				Attributes:   nil,
+				ParentType:   mi.ParentType,
+			}
+		}
+
+		metrics[m.Counter] = append(metrics[m.Counter], m)
+	}
+}
+
+func toGPUNvLinkMetric(
+	metrics MetricsByCounter,
+	values []dcgm.FieldValue_v1,
+	c []counters.Counter,
+	mi devicemonitoring.Info,
+	hostname string,
+) {
+	labels := map[string]string{}
+
+	for _, val := range values {
+		v := toString(val)
+		// Filter out counters with no value and ignored fields for this entity
+
+		counter, err := findCounterField(c, val.FieldID)
+		if err != nil {
+			continue
+		}
+
+		if counter.IsLabel() {
+			labels[counter.FieldName] = v
+			continue
+		}
+		uuid := "UUID"
+		var m Metric
+		if v == skipDCGMValue {
+			continue
+		} else {
+			attrs := map[string]string{}
+
+			m = Metric{
+				Counter:      counter,
+				Value:        v,
+				UUID:         uuid,
+				GPU:          fmt.Sprintf("%d", mi.DeviceInfo.GPU),
+				GPUUUID:      mi.DeviceInfo.UUID,
+				NvLink:       fmt.Sprintf("%d", mi.Entity.EntityId),
+				GPUDevice:    fmt.Sprintf("nvidia%d", mi.DeviceInfo.GPU),
+				GPUModelName: getGPUModel(mi.DeviceInfo, false),
+				GPUPCIBusID:  mi.DeviceInfo.PCI.BusID,
+				Hostname:     hostname,
+				Labels:       labels,
+				Attributes:   attrs,
+				ParentType:   mi.ParentType,
 			}
 		}
 
@@ -237,8 +290,7 @@ func toMetric(
 	metrics MetricsByCounter,
 	values []dcgm.FieldValue_v1,
 	c []counters.Counter,
-	d dcgm.Device,
-	instanceInfo *deviceinfo.GPUInstanceInfo,
+	mi devicemonitoring.Info,
 	useOld bool,
 	hostname string,
 	replaceBlanksInModelName bool,
@@ -252,7 +304,7 @@ func toMetric(
 			continue
 		}
 
-		counter, err := findCounterField(c, val.FieldId)
+		counter, err := findCounterField(c, val.FieldID)
 		if err != nil {
 			continue
 		}
@@ -266,7 +318,7 @@ func toMetric(
 			uuid = "uuid"
 		}
 
-		gpuModel := getGPUModel(d, replaceBlanksInModelName)
+		gpuModel := getGPUModel(mi.DeviceInfo, replaceBlanksInModelName)
 
 		attrs := map[string]string{}
 		if counter.FieldID == dcgm.DCGM_FI_DEV_XID_ERRORS {
@@ -284,19 +336,20 @@ func toMetric(
 			Value:   v,
 
 			UUID:         uuid,
-			GPU:          fmt.Sprintf("%d", d.GPU),
-			GPUUUID:      d.UUID,
-			GPUDevice:    fmt.Sprintf("nvidia%d", d.GPU),
+			GPU:          fmt.Sprintf("%d", mi.DeviceInfo.GPU),
+			GPUUUID:      mi.DeviceInfo.UUID,
+			GPUDevice:    fmt.Sprintf("nvidia%d", mi.DeviceInfo.GPU),
 			GPUModelName: gpuModel,
-			GPUPCIBusID:  d.PCI.BusID,
+			GPUPCIBusID:  mi.DeviceInfo.PCI.BusID,
 			Hostname:     hostname,
 
 			Labels:     labels,
 			Attributes: attrs,
+			ParentType: mi.ParentType,
 		}
-		if instanceInfo != nil {
-			m.MigProfile = instanceInfo.ProfileName
-			m.GPUInstanceID = fmt.Sprintf("%d", instanceInfo.Info.NvmlInstanceId)
+		if mi.InstanceInfo != nil {
+			m.MigProfile = mi.InstanceInfo.ProfileName
+			m.GPUInstanceID = fmt.Sprintf("%d", mi.InstanceInfo.Info.NvmlInstanceId)
 		} else {
 			m.MigProfile = ""
 			m.GPUInstanceID = ""
@@ -320,52 +373,23 @@ func getGPUModel(d dcgm.Device, replaceBlanksInModelName bool) string {
 func toString(value dcgm.FieldValue_v1) string {
 	switch value.FieldType {
 	case dcgm.DCGM_FT_INT64:
-		switch v := value.Int64(); v {
-		case dcgm.DCGM_FT_INT32_BLANK:
+		v := value.Int64()
+		if isInt64Blank(v) {
 			return skipDCGMValue
-		case dcgm.DCGM_FT_INT32_NOT_FOUND:
-			return skipDCGMValue
-		case dcgm.DCGM_FT_INT32_NOT_SUPPORTED:
-			return skipDCGMValue
-		case dcgm.DCGM_FT_INT32_NOT_PERMISSIONED:
-			return skipDCGMValue
-		case dcgm.DCGM_FT_INT64_BLANK:
-			return skipDCGMValue
-		case dcgm.DCGM_FT_INT64_NOT_FOUND:
-			return skipDCGMValue
-		case dcgm.DCGM_FT_INT64_NOT_SUPPORTED:
-			return skipDCGMValue
-		case dcgm.DCGM_FT_INT64_NOT_PERMISSIONED:
-			return skipDCGMValue
-		default:
-			return fmt.Sprintf("%d", value.Int64())
 		}
+		return fmt.Sprintf("%d", v)
 	case dcgm.DCGM_FT_DOUBLE:
-		switch v := value.Float64(); v {
-		case dcgm.DCGM_FT_FP64_BLANK:
+		v := value.Float64()
+		if isFloat64Blank(v) {
 			return skipDCGMValue
-		case dcgm.DCGM_FT_FP64_NOT_FOUND:
-			return skipDCGMValue
-		case dcgm.DCGM_FT_FP64_NOT_SUPPORTED:
-			return skipDCGMValue
-		case dcgm.DCGM_FT_FP64_NOT_PERMISSIONED:
-			return skipDCGMValue
-		default:
-			return fmt.Sprintf("%f", value.Float64())
 		}
+		return fmt.Sprintf("%f", v)
 	case dcgm.DCGM_FT_STRING:
-		switch v := value.String(); v {
-		case dcgm.DCGM_FT_STR_BLANK:
+		v := value.String()
+		if isStringBlank(v) {
 			return skipDCGMValue
-		case dcgm.DCGM_FT_STR_NOT_FOUND:
-			return skipDCGMValue
-		case dcgm.DCGM_FT_STR_NOT_SUPPORTED:
-			return skipDCGMValue
-		case dcgm.DCGM_FT_STR_NOT_PERMISSIONED:
-			return skipDCGMValue
-		default:
-			return v
 		}
+		return v
 	}
 
 	return FailedToConvert
