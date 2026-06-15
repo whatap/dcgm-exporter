@@ -23,6 +23,10 @@ import (
 // GetTransformations return list of transformation applicable for metrics
 func GetTransformations(c *appconfig.Config) []Transform {
 	var transformations []Transform
+
+	// WeightedUtil derives DCGM_FI_DEV_WEIGHTED_GPU_UTIL for MIG and non-MIG devices.
+	transformations = append(transformations, NewWeightedUtil())
+
 	if c.Kubernetes {
 		podMapper := NewPodMapper(c)
 		transformations = append(transformations, podMapper)
