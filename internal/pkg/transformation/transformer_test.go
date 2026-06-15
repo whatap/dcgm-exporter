@@ -35,8 +35,10 @@ func TestGetTransformations(t *testing.T) {
 			config: &appconfig.Config{
 				Kubernetes: false,
 			},
+			// WeightedUtil is always registered, so even the bare environment has one transform.
 			assert: func(t *testing.T, transforms []Transform) {
-				assert.Len(t, transforms, 0)
+				assert.Len(t, transforms, 1)
+				assert.Equal(t, "WeightedUtil", transforms[0].Name())
 			},
 		},
 		{
@@ -44,8 +46,9 @@ func TestGetTransformations(t *testing.T) {
 			config: &appconfig.Config{
 				Kubernetes: true,
 			},
+			// WeightedUtil + PodMapper
 			assert: func(t *testing.T, transforms []Transform) {
-				assert.Len(t, transforms, 1)
+				assert.Len(t, transforms, 2)
 			},
 		},
 		{
@@ -53,8 +56,9 @@ func TestGetTransformations(t *testing.T) {
 			config: &appconfig.Config{
 				HPCJobMappingDir: "/var/run/nvidia/slurm",
 			},
+			// WeightedUtil + HPCMapper
 			assert: func(t *testing.T, transforms []Transform) {
-				assert.Len(t, transforms, 1)
+				assert.Len(t, transforms, 2)
 			},
 		},
 	}
