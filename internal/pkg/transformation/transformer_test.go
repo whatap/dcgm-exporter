@@ -69,8 +69,9 @@ func TestGetTransformations(t *testing.T) {
 				ContainerRuntimeSocket: "/run/podman/podman.sock",
 			},
 			assert: func(t *testing.T, transforms []Transform) {
-				require.Len(t, transforms, 1)
-				assert.Equal(t, "containerMapper", transforms[0].Name())
+				require.Len(t, transforms, 2)
+				assert.Equal(t, "WeightedUtil", transforms[0].Name())
+				assert.Equal(t, "containerMapper", transforms[1].Name())
 			},
 		},
 		{
@@ -81,8 +82,9 @@ func TestGetTransformations(t *testing.T) {
 				ContainerRuntimeSocket: "/run/podman/podman.sock",
 			},
 			assert: func(t *testing.T, transforms []Transform) {
-				require.Len(t, transforms, 1)
-				assert.NotEqual(t, "containerMapper", transforms[0].Name())
+				require.Len(t, transforms, 2)
+				assert.Equal(t, "WeightedUtil", transforms[0].Name())
+				assert.Equal(t, "podMapper", transforms[1].Name())
 			},
 		},
 	}
