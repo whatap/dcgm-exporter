@@ -13,23 +13,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set -e
+# This script builds dcgm-exporter inside the cross-build container for the requested platform.
+
+set -euo pipefail
 
 TARGETOS=${TARGETOS:-linux}
 TARGETARCH=${TARGETARCH:-amd64}
 
 # Configure cross-compilation based on target architecture
-if [ "$TARGETARCH" = "arm64" ]; then
+if [[ "$TARGETARCH" = "arm64" ]]; then
     export CC=aarch64-linux-gnu-gcc
-    export LD_LIBRARY_PATH=/usr/aarch64-linux-gnu/lib:$LD_LIBRARY_PATH
+    export LD_LIBRARY_PATH="/usr/aarch64-linux-gnu/lib:${LD_LIBRARY_PATH:-}"
 else
     export CC=gcc
 fi
 
 echo "Building dcgm-exporter for $TARGETOS/$TARGETARCH using CC=$CC"
 
+# For hermetic builds, switch to offline mode when cached modules are available.
+if [[ "${GOPROXY_ENABLED:-}" = "true" ]] && [[ -d "/go/pkg/mod" ]] && [[ "$(ls -A /go/pkg/mod)" ]]; then
+    echo "Hermetic build: Using cached modules in offline mode"
+    export GOPROXY=off
+    export GOSUMDB=off
+    export GONOSUMDB='*'
+fi
+
 # Execute build with all necessary environment variables
 GOOS=$TARGETOS GOARCH=$TARGETARCH CGO_ENABLED=1 CC=$CC make install
 
 echo "Build completed successfully"
-

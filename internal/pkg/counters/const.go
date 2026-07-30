@@ -17,8 +17,6 @@
 package counters
 
 const (
-	undefinedConfigMapData = "none"
-
 	cpuFieldsStart = 1100
 	dcpFieldsStart = 1000
 
@@ -26,5 +24,7 @@ const (
 	DCGMExpXIDErrorsCount   = "DCGM_EXP_XID_ERRORS_COUNT"
 	DCGMExpGPUHealthStatus  = "DCGM_EXP_GPU_HEALTH_STATUS"
 	DCGMExpP2PStatus        = "DCGM_EXP_P2P_STATUS"
+	DCGMExpXIDErrorsTotal   = "DCGM_EXP_XID_ERRORS_TOTAL"
+	DCGMExpClockEventsTotal = "DCGM_EXP_CLOCK_EVENTS_TOTAL"
 	DCGMExpWeightedGPUUtil  = "DCGM_FI_DEV_WEIGHTED_GPU_UTIL"
 )

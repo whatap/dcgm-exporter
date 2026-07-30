@@ -35,12 +35,16 @@ type DCGM interface {
 	EntitiesGetLatestValues([]dcgm.GroupEntityPair, []dcgm.Short, uint) ([]dcgm.FieldValue_v2, error)
 	EntityGetLatestValues(dcgm.Field_Entity_Group, uint, []dcgm.Short) ([]dcgm.FieldValue_v1, error)
 	Fv2_String(fv dcgm.FieldValue_v2) string
-	FieldGetByID(dcgm.Short) dcgm.FieldMeta
+	FieldGetByID(dcgm.Short) (dcgm.FieldMeta, error)
 	FieldGroupCreate(string, []dcgm.Short) (dcgm.FieldHandle, error)
 	FieldGroupDestroy(dcgm.FieldHandle) error
 	GetAllDeviceCount() (uint, error)
-	GetCPUHierarchy() (dcgm.CPUHierarchy_v1, error)
+	// GetCPUHierarchy returns the v2-shaped hierarchy.
+	// Legacy v1 fallback stays internal to dcgmProvider.
+	GetCPUHierarchy() (dcgm.CPUHierarchy_v2, error)
 	GetDeviceInfo(uint) (dcgm.Device, error)
+	// GetErrorMeta returns DCGM-owned metadata for a health or diagnostic error code.
+	GetErrorMeta(dcgm.HealthCheckErrorCode) *dcgm.ErrorMeta
 	GetEntityGroupEntities(entityGroup dcgm.Field_Entity_Group) ([]uint, error)
 	GetGPUInstanceHierarchy() (dcgm.MigHierarchy_v2, error)
 	GetNvLinkLinkStatus() ([]dcgm.NvLinkStatus, error)

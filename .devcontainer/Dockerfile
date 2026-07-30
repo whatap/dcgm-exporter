@@ -1,11 +1,21 @@
-FROM nvcr.io/nvidia/cuda:13.1.1-base-ubuntu22.04
-ARG GOLANG_VERSION=1.24.13
+FROM nvcr.io/nvidia/cuda:13.3.0-base-ubuntu26.04
+ARG GOLANG_VERSION=1.26.4
 ARG USERNAME=developer
 ARG USER_UID=1000
 ARG USER_GID=1000
-# Create a user 'developer' with UID=1000, add to 'developer' group, and add to 'sudo' group
-RUN groupadd -g $USER_GID $USERNAME && \
-	useradd -m -u $USER_GID -g $USERNAME -s /bin/bash $USERNAME && \
+# Create or reuse a UID=1000 user named 'developer', and add it to 'sudo'.
+RUN set -eux; \
+	getent group $USER_GID || groupadd -g $USER_GID $USERNAME; \
+	existing_user="$(getent passwd $USER_UID | cut -d: -f1 || true)"; \
+	if [ -n "$existing_user" ]; then \
+		if [ "$existing_user" != "$USERNAME" ] && id -u $USERNAME >/dev/null 2>&1; then userdel -r $USERNAME || true; fi; \
+		if [ "$existing_user" != "$USERNAME" ]; then usermod -l $USERNAME -d /home/$USERNAME -m "$existing_user"; fi; \
+		usermod -g $USER_GID $USERNAME; \
+	elif id -u $USERNAME >/dev/null 2>&1; then \
+		usermod -u $USER_UID -g $USER_GID $USERNAME; \
+	else \
+		useradd -m -u $USER_UID -g $USER_GID -s /bin/bash $USERNAME; \
+	fi; \
 	usermod -aG sudo $USERNAME
 # Allow 'developer' to use sudo without a password
 RUN echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
@@ -19,9 +29,12 @@ RUN --mount=type=cache,target=/var/cache/apt \
 	curl \
 	g++ \
 	gcc \
+	gcc-aarch64-linux-gnu \
 	libc6-dev \
+	libc6-dev-arm64-cross \
 	make \
 	pkg-config \
+	shellcheck \
 	wget \
 	datacenter-gpu-manager-4-core \
 	libcap2-bin \

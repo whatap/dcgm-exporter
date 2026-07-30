@@ -18,6 +18,7 @@ package testutils
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"reflect"
@@ -195,6 +196,7 @@ func CreateTmpDir(t *testing.T) (string, func()) {
 }
 
 type MockPodResourcesServer struct {
+	v1.UnimplementedPodResourcesListerServer
 	resourceName string
 	gpus         []string
 }
@@ -277,7 +279,9 @@ func StartMockServer(t *testing.T, server *grpc.Server, socket string) func() {
 
 	go func() {
 		err := server.Serve(l)
-		assert.NoError(t, err)
+		if err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+			assert.NoError(t, err)
+		}
 		close(stopped)
 	}()
 
