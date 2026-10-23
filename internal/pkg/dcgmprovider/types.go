@@ -55,6 +55,10 @@ type DCGM interface {
 	InjectFieldValue(gpu uint, fieldID dcgm.Short, fieldType uint, status int, ts int64, value interface{}) error
 	LinkGetLatestValues(uint, dcgm.Field_Entity_Group, uint, []dcgm.Short) ([]dcgm.FieldValue_v1, error)
 	NewDefaultGroup(string) (dcgm.GroupHandle, error)
+	// ProfPause pauses DCGM profiling (DCP) collection for every GPU on the hostengine.
+	ProfPause() error
+	// ProfResume resumes DCGM profiling collection and re-acquires its per-GPU state.
+	ProfResume() error
 	UpdateAllFields() error
 	WatchFieldsWithGroupEx(dcgm.FieldHandle, dcgm.GroupHandle, int64, float64, int32) error
 	UnwatchFields(dcgm.FieldHandle, dcgm.GroupHandle) error

@@ -29,6 +29,9 @@ const (
 	DefaultCollectorsFile  = "/etc/dcgm-exporter/default-counters.csv"
 	UndefinedConfigMapData = "none"
 	DefaultConfigMapKey    = "metrics"
+	// DefaultProfilingResetAfter bounds how long profiling metrics may stay frozen after
+	// re-watching before the exporter pauses and resumes DCGM profiling.
+	DefaultProfilingResetAfter = 10 * time.Minute
 )
 
 // MetricSourceKind identifies where dcgm-exporter should load metric definitions from.
@@ -130,6 +133,9 @@ type Config struct {
 	EnableGPUBindUnbindWatch         bool          // Enable GPU bind/unbind event monitoring
 	GPUBindUnbindPollInterval        time.Duration // Poll interval for GPU bind/unbind events
 	EnablePprof                      bool          // Enable /debug/pprof/ HTTP endpoints
+	// ProfilingResetAfter pauses and resumes DCGM profiling once a profiling watch has stayed
+	// stale after re-watching for this long; zero or negative disables the reset.
+	ProfilingResetAfter time.Duration
 }
 
 // Clone returns a copy of Config with slices duplicated for reload snapshots.

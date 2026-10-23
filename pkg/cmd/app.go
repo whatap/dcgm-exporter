@@ -111,6 +111,7 @@ const (
 	CLIEnableGPUBindUnbindWatch         = "enable-gpu-bind-unbind-watch"
 	CLIGPUBindUnbindPollInterval        = "gpu-bind-unbind-poll-interval"
 	CLIEnablePprof                      = "enable-pprof"
+	CLIProfilingResetAfter              = "profiling-reset-after"
 )
 
 var (
@@ -408,6 +409,13 @@ func NewApp(buildVersion ...string) *cli.App {
 			Value:   false,
 			Usage:   "Enable /debug/pprof/ HTTP endpoints for profiling and debugging",
 			EnvVars: []string{"DCGM_EXPORTER_ENABLE_PPROF"},
+		},
+		&cli.StringFlag{
+			Name: CLIProfilingResetAfter,
+			Usage: "Pause and resume DCGM profiling when profiling metrics stay frozen after re-watching " +
+				"for this long (e.g. after a GPU reset or Fabric Manager restart); 0 disables",
+			EnvVars: []string{"DCGM_EXPORTER_PROFILING_RESET_AFTER"},
+			Value:   appconfig.DefaultProfilingResetAfter.String(),
 		},
 	}
 
@@ -1482,6 +1490,7 @@ func defaultConfig() (*appconfig.Config, error) {
 		EnableGPUBindUnbindWatch:  false,
 		GPUBindUnbindPollInterval: time.Second,
 		EnablePprof:               false,
+		ProfilingResetAfter:       appconfig.DefaultProfilingResetAfter,
 	}, nil
 }
 
@@ -1624,6 +1633,12 @@ func applyExplicitConfigOverrides(c *cli.Context, config *appconfig.Config) erro
 	}
 	if c.IsSet(CLIEnablePprof) {
 		config.EnablePprof = c.Bool(CLIEnablePprof)
+	}
+	if c.IsSet(CLIProfilingResetAfter) {
+		config.ProfilingResetAfter = parseDuration(
+			c.String(CLIProfilingResetAfter),
+			appconfig.DefaultProfilingResetAfter,
+		)
 	}
 
 	return nil

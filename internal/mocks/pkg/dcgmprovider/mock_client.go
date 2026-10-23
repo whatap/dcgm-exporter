@@ -509,6 +509,34 @@ func (mr *MockDCGMMockRecorder) NewDefaultGroup(arg0 any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "NewDefaultGroup", reflect.TypeOf((*MockDCGM)(nil).NewDefaultGroup), arg0)
 }
 
+// ProfPause mocks base method.
+func (m *MockDCGM) ProfPause() error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ProfPause")
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ProfPause indicates an expected call of ProfPause.
+func (mr *MockDCGMMockRecorder) ProfPause() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ProfPause", reflect.TypeOf((*MockDCGM)(nil).ProfPause))
+}
+
+// ProfResume mocks base method.
+func (m *MockDCGM) ProfResume() error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ProfResume")
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ProfResume indicates an expected call of ProfResume.
+func (mr *MockDCGMMockRecorder) ProfResume() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ProfResume", reflect.TypeOf((*MockDCGM)(nil).ProfResume))
+}
+
 // UnwatchFields mocks base method.
 func (m *MockDCGM) UnwatchFields(arg0 dcgm.FieldHandle, arg1 dcgm.GroupHandle) error {
 	m.ctrl.T.Helper()
