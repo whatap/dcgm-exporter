@@ -54,6 +54,12 @@ type DCGMCollector struct {
 	profilingSamples      map[profilingSampleKey]profilingSample
 	nextProfilingRepair   time.Time
 	now                   func() time.Time
+
+	// profilingRepairFailingSince marks the first failed repair of the current stale streak.
+	profilingRepairFailingSince time.Time
+	// profilingResetAfter enables the hostengine-wide profiling reset after a long streak.
+	profilingResetAfter time.Duration
+	profilingResetter   *profilingResetter
 }
 
 // profilingSampleKey identifies one profiling stream within a collector.
@@ -115,6 +121,8 @@ func NewDCGMCollector(
 
 	collector.useOldNamespace = config.UseOldNamespace
 	collector.replaceBlanksInModelName = config.ReplaceBlanksInModelName
+	collector.profilingResetAfter = config.ProfilingResetAfter
+	collector.profilingResetter = defaultProfilingResetter
 
 	// Track only profiling fields that this entity collector actually watches.
 	profilingStaleWindows, err := resolveProfilingStaleWindows(
@@ -159,6 +167,7 @@ func (c *DCGMCollector) GetMetrics() (MetricsByCounter, error) {
 		return nil, err
 	}
 	if reason == nil {
+		c.profilingRepairFailingSince = time.Time{}
 		return metrics, nil
 	}
 
@@ -190,6 +199,7 @@ func (c *DCGMCollector) repairProfilingWatch(
 	)
 	if err := c.rearmProfilingWatch(); err != nil {
 		slog.Error("Failed to repair DCGM profiling watch", slog.String("error", err.Error()))
+		c.escalateFailedProfilingRepair(now, reason)
 		return fallback, nil
 	}
 
@@ -197,6 +207,7 @@ func (c *DCGMCollector) repairProfilingWatch(
 	metrics, retryReason, err := c.getMetricsOnce()
 	if err != nil {
 		slog.Error("Failed to collect metrics after repairing DCGM profiling watch", slog.String("error", err.Error()))
+		c.escalateFailedProfilingRepair(now, reason)
 		return fallback, nil
 	}
 	if retryReason != nil {
@@ -204,11 +215,85 @@ func (c *DCGMCollector) repairProfilingWatch(
 		if retryFallback := nonProfilingMetrics(metrics); len(retryFallback) > 0 {
 			fallback = retryFallback
 		}
+		c.escalateFailedProfilingRepair(now, retryReason)
 		return fallback, nil
 	}
 
+	c.profilingRepairFailingSince = time.Time{}
 	slog.Info("Repaired stale DCGM profiling watch")
 	return metrics, nil
+}
+
+// escalateFailedProfilingRepair pauses and resumes DCGM profiling when re-watching alone
+// has not produced fresh profiling samples for profilingResetAfter.
+func (c *DCGMCollector) escalateFailedProfilingRepair(now time.Time, reason *profilingRepairReason) {
+	if c.profilingRepairFailingSince.IsZero() {
+		c.profilingRepairFailingSince = now
+	}
+	if c.profilingResetAfter <= 0 || c.profilingResetter == nil {
+		return
+	}
+
+	c.profilingResetter.resetIfDue(now, now.Sub(c.profilingRepairFailingSince), c.profilingResetAfter, reason)
+}
+
+// profilingResetter pauses and resumes DCGM profiling hostengine-wide.
+//
+// A watch that stays stale after it was recreated means the hostengine's profiling module
+// stopped sampling (observed on a mixed-MIG DGX A100 after a GPU reset and Fabric Manager
+// restarts: profiling timestamps froze for days while device fields stayed fresh). Pausing
+// and resuming profiling makes DCGM re-acquire its profiling state without restarting the
+// hostengine. An intentional pause for developer tools is not affected: DCGM keeps writing
+// BLANK samples with fresh timestamps, which never look stale. The state is shared because
+// every entity collector talks to the same hostengine, so one reset recovers all of them.
+type profilingResetter struct {
+	mu         sync.Mutex
+	nextReset  time.Time
+	resumeOwed bool
+}
+
+var defaultProfilingResetter = &profilingResetter{}
+
+// resetIfDue pauses and resumes profiling once a failing streak reaches resetAfter, at most
+// once per resetAfter, and retries a failed resume on every later call until it succeeds.
+func (r *profilingResetter) resetIfDue(
+	now time.Time,
+	failingFor time.Duration,
+	resetAfter time.Duration,
+	reason *profilingRepairReason,
+) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if !r.resumeOwed {
+		if failingFor < resetAfter || now.Before(r.nextReset) {
+			return false
+		}
+		r.nextReset = now.Add(resetAfter)
+
+		slog.Warn(
+			"Pausing and resuming DCGM profiling because the profiling watch stayed stale after repair",
+			slog.String("reason", reason.String()),
+			slog.Duration("failingFor", failingFor),
+		)
+		if err := dcgmprovider.Client().ProfPause(); err != nil {
+			slog.Error("Failed to pause DCGM profiling", slog.String("error", err.Error()))
+			return false
+		}
+	}
+
+	if err := dcgmprovider.Client().ProfResume(); err != nil {
+		r.resumeOwed = true
+		slog.Error(
+			"Failed to resume DCGM profiling; retrying on the next failed repair",
+			slog.String("error", err.Error()),
+		)
+		return false
+	}
+	r.resumeOwed = false
+
+	slog.Info("Resumed DCGM profiling; fresh profiling samples are expected on the next collection")
+	return true
 }
 
 // getMetricsOnce performs one scrape and reports stale profiling state separately from API errors.
